@@ -62,6 +62,32 @@ header h1 {
     font-weight: 500;
 }
 
+/* Tool toggle buttons */
+.tool-toggle {
+    background: var(--bg);
+    border-radius: var(--radius);
+    padding: 2px;
+}
+
+.tool-btn {
+    padding: 4px 12px;
+    border: 1px solid transparent;
+    background: transparent;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border-radius: 6px;
+}
+
+.tool-btn.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.tool-btn:not(.active):hover {
+    background: var(--surface);
+}
+
 #toolbar input[type="number"] {
     width: 56px;
     padding: 4px 6px;
@@ -79,6 +105,14 @@ header h1 {
     border-radius: 4px;
     cursor: pointer;
     background: none;
+}
+
+#toolbar input[type="range"] {
+    width: 60px;
+    height: 4px;
+    cursor: pointer;
+    accent-color: var(--primary);
+    vertical-align: middle;
 }
 
 #toolbar select {
@@ -267,6 +301,40 @@ main {
 .text-overlay:focus .text-overlay-handle,
 .text-overlay:hover .text-overlay-handle {
     display: block;
+}
+
+/* Rectangle Overlay */
+.rect-overlay {
+    position: absolute;
+    cursor: move;
+    box-sizing: border-box;
+}
+
+.rect-overlay:hover,
+.rect-overlay.selected {
+    outline: 2px dashed var(--primary);
+    outline-offset: 2px;
+}
+
+.rect-overlay .text-overlay-handle {
+    display: none;
+}
+
+.rect-overlay:hover .text-overlay-handle {
+    display: block;
+}
+
+/* Drawing cursor */
+#textLayer.drawing-rect {
+    cursor: crosshair;
+}
+
+/* Preview rectangle while dragging */
+.rect-preview {
+    position: absolute;
+    border: 2px dashed var(--primary);
+    background: rgba(37, 99, 235, 0.1);
+    pointer-events: none;
 }
 
 /* Loading */

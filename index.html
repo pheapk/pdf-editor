@@ -17,7 +17,11 @@
                 <span id="pageInfo">Page 1 / 1</span>
                 <button id="nextPage" title="Next page">Next &rarr;</button>
             </div>
-            <div class="toolbar-group">
+            <div class="toolbar-group tool-toggle">
+                <button id="toolText" class="tool-btn active" title="Text tool">Text</button>
+                <button id="toolRect" class="tool-btn" title="Rectangle tool">Rect</button>
+            </div>
+            <div id="textControls" class="toolbar-group">
                 <label for="fontSize">Size:</label>
                 <input type="number" id="fontSize" value="16" min="6" max="72" step="1">
                 <label for="fontColor">Color:</label>
@@ -29,9 +33,23 @@
                     <option value="Courier">Courier</option>
                 </select>
             </div>
+            <div id="rectControls" class="toolbar-group hidden">
+                <label for="rectFill">Fill:</label>
+                <input type="color" id="rectFill" value="#2563eb">
+                <label for="rectFillOpacity">
+                    <input type="range" id="rectFillOpacity" min="0" max="100" value="20" title="Fill opacity">
+                </label>
+                <label for="rectBorder">Border:</label>
+                <input type="color" id="rectBorder" value="#1e293b">
+                <label for="rectBorderOpacity">
+                    <input type="range" id="rectBorderOpacity" min="0" max="100" value="100" title="Border opacity">
+                </label>
+                <label for="rectBorderWidth">Width:</label>
+                <input type="number" id="rectBorderWidth" value="2" min="0" max="20" step="0.5">
+            </div>
             <div class="toolbar-group">
-                <button id="undoBtn" title="Remove last text box">Undo</button>
-                <button id="clearPageBtn" title="Clear all text on this page">Clear Page</button>
+                <button id="undoBtn" title="Remove last overlay">Undo</button>
+                <button id="clearPageBtn" title="Clear all overlays on this page">Clear Page</button>
                 <button id="saveBtn" class="primary" title="Save and download PDF">Save &amp; Download</button>
             </div>
         </div>
@@ -58,7 +76,7 @@
                 <canvas id="pdfCanvas"></canvas>
                 <div id="textLayer"></div>
             </div>
-            <p id="hint">Click anywhere on the page to add text</p>
+            <p id="hint">Click anywhere to add text &mdash; switch to Rect to draw rectangles</p>
         </div>
     </main>
 

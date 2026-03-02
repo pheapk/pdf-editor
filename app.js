@@ -12,8 +12,14 @@
         currentPage: 1,
         totalPages: 0,
         scale: 1.5,
+        activeTool: 'text',   // 'text' or 'rect'
         // textOverlays[pageNum] = [ { x, y, text, fontSize, color, fontFamily } ]
         textOverlays: {},
+        // rectOverlays[pageNum] = [ { x, y, w, h, fillColor, fillOpacity, borderColor, borderOpacity, borderWidth } ]
+        rectOverlays: {},
+        // Drag state for drawing rectangles
+        drawing: false,
+        drawStart: null,
     };
 
     // ---- DOM refs ----
@@ -38,6 +44,17 @@
     const loadingOverlay = $('#loadingOverlay');
     const ctx          = canvas.getContext('2d');
 
+    // Tool toggle & rect controls
+    const toolTextBtn      = $('#toolText');
+    const toolRectBtn      = $('#toolRect');
+    const textControls     = $('#textControls');
+    const rectControls     = $('#rectControls');
+    const rectFillIn       = $('#rectFill');
+    const rectFillOpacIn   = $('#rectFillOpacity');
+    const rectBorderIn     = $('#rectBorder');
+    const rectBorderOpacIn = $('#rectBorderOpacity');
+    const rectBorderWidthIn = $('#rectBorderWidth');
+
     // ---- Helpers ----
     function showLoading() { loadingOverlay.classList.remove('hidden'); }
     function hideLoading() { loadingOverlay.classList.add('hidden'); }
@@ -45,6 +62,19 @@
     function getOverlays(page) {
         if (!state.textOverlays[page]) state.textOverlays[page] = [];
         return state.textOverlays[page];
+    }
+
+    function getRectOverlays(page) {
+        if (!state.rectOverlays[page]) state.rectOverlays[page] = [];
+        return state.rectOverlays[page];
+    }
+
+    function hexToRgba(hex, opacity) {
+        const h = hex.replace('#', '');
+        const r = parseInt(h.substring(0, 2), 16);
+        const g = parseInt(h.substring(2, 4), 16);
+        const b = parseInt(h.substring(4, 6), 16);
+        return `rgba(${r},${g},${b},${opacity / 100})`;
     }
 
     // ---- File Upload ----
@@ -87,6 +117,7 @@
             state.totalPages = state.pdfDoc.numPages;
             state.currentPage = 1;
             state.textOverlays = {};
+            state.rectOverlays = {};
 
             uploadArea.classList.add('hidden');
             editorArea.classList.remove('hidden');
@@ -113,7 +144,19 @@
         await page.render({ canvasContext: ctx, viewport }).promise;
 
         updatePageInfo();
-        renderTextOverlays();
+        renderAllOverlays();
+    }
+
+    function renderAllOverlays() {
+        textLayer.innerHTML = '';
+        // Render rects first (behind text)
+        getRectOverlays(state.currentPage).forEach((ov, idx) => {
+            createRectElement(ov, idx);
+        });
+        // Then text on top
+        getOverlays(state.currentPage).forEach((ov, idx) => {
+            createOverlayElement(ov, idx);
+        });
     }
 
     function updatePageInfo() {
@@ -138,16 +181,6 @@
     });
 
     // ---- Text Overlays ----
-    function renderTextOverlays() {
-        // Clear existing DOM overlays
-        textLayer.innerHTML = '';
-
-        const overlays = getOverlays(state.currentPage);
-        overlays.forEach((ov, idx) => {
-            createOverlayElement(ov, idx);
-        });
-    }
-
     function createOverlayElement(ov, idx) {
         const div = document.createElement('div');
         div.className = 'text-overlay';
@@ -168,7 +201,7 @@
         handle.addEventListener('click', (e) => {
             e.stopPropagation();
             getOverlays(state.currentPage).splice(idx, 1);
-            renderTextOverlays();
+            renderAllOverlays();
         });
         div.appendChild(handle);
 
@@ -188,9 +221,22 @@
         return div;
     }
 
-    // Click on canvas/textLayer to create new text box
+    // ---- Tool Switching ----
+    toolTextBtn.addEventListener('click', () => setTool('text'));
+    toolRectBtn.addEventListener('click', () => setTool('rect'));
+
+    function setTool(tool) {
+        state.activeTool = tool;
+        toolTextBtn.classList.toggle('active', tool === 'text');
+        toolRectBtn.classList.toggle('active', tool === 'rect');
+        textControls.classList.toggle('hidden', tool !== 'text');
+        rectControls.classList.toggle('hidden', tool !== 'rect');
+        textLayer.classList.toggle('drawing-rect', tool === 'rect');
+    }
+
+    // Click on textLayer to create new text box (only in text mode)
     textLayer.addEventListener('click', (e) => {
-        // Don't create new box if clicking on existing overlay
+        if (state.activeTool !== 'text') return;
         if (e.target !== textLayer) return;
 
         const rect = textLayer.getBoundingClientRect();
@@ -211,6 +257,148 @@
         const el = createOverlayElement(overlay, idx);
         el.focus();
     });
+
+    // ---- Rectangle Drawing (mousedown → mousemove → mouseup) ----
+    textLayer.addEventListener('mousedown', (e) => {
+        if (state.activeTool !== 'rect') return;
+        if (e.target !== textLayer) return;
+
+        const rect = textLayer.getBoundingClientRect();
+        state.drawing = true;
+        state.drawStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+
+        // Create preview element
+        const preview = document.createElement('div');
+        preview.className = 'rect-preview';
+        preview.style.left = state.drawStart.x + 'px';
+        preview.style.top = state.drawStart.y + 'px';
+        preview.style.width = '0px';
+        preview.style.height = '0px';
+        preview.id = 'rectPreview';
+        textLayer.appendChild(preview);
+
+        e.preventDefault();
+    });
+
+    textLayer.addEventListener('mousemove', (e) => {
+        if (!state.drawing || !state.drawStart) return;
+
+        const rect = textLayer.getBoundingClientRect();
+        const curX = e.clientX - rect.left;
+        const curY = e.clientY - rect.top;
+
+        const x = Math.min(state.drawStart.x, curX);
+        const y = Math.min(state.drawStart.y, curY);
+        const w = Math.abs(curX - state.drawStart.x);
+        const h = Math.abs(curY - state.drawStart.y);
+
+        const preview = $('#rectPreview');
+        if (preview) {
+            preview.style.left = x + 'px';
+            preview.style.top = y + 'px';
+            preview.style.width = w + 'px';
+            preview.style.height = h + 'px';
+        }
+    });
+
+    textLayer.addEventListener('mouseup', (e) => {
+        if (!state.drawing || !state.drawStart) return;
+
+        const rect = textLayer.getBoundingClientRect();
+        const endX = e.clientX - rect.left;
+        const endY = e.clientY - rect.top;
+
+        const x = Math.min(state.drawStart.x, endX);
+        const y = Math.min(state.drawStart.y, endY);
+        const w = Math.abs(endX - state.drawStart.x);
+        const h = Math.abs(endY - state.drawStart.y);
+
+        state.drawing = false;
+        state.drawStart = null;
+
+        // Remove preview
+        const preview = $('#rectPreview');
+        if (preview) preview.remove();
+
+        // Only create if big enough (avoid accidental clicks)
+        if (w < 5 || h < 5) return;
+
+        const overlay = {
+            x, y, w, h,
+            fillColor: rectFillIn.value,
+            fillOpacity: parseInt(rectFillOpacIn.value, 10),
+            borderColor: rectBorderIn.value,
+            borderOpacity: parseInt(rectBorderOpacIn.value, 10),
+            borderWidth: parseFloat(rectBorderWidthIn.value) || 2,
+        };
+
+        getRectOverlays(state.currentPage).push(overlay);
+        renderAllOverlays();
+    });
+
+    // ---- Rectangle Element Creation ----
+    function createRectElement(ov, idx) {
+        const div = document.createElement('div');
+        div.className = 'rect-overlay';
+        div.style.left = ov.x + 'px';
+        div.style.top = ov.y + 'px';
+        div.style.width = ov.w + 'px';
+        div.style.height = ov.h + 'px';
+        div.style.backgroundColor = hexToRgba(ov.fillColor, ov.fillOpacity);
+        div.style.border = ov.borderWidth + 'px solid ' + hexToRgba(ov.borderColor, ov.borderOpacity);
+        div.dataset.rectIndex = idx;
+
+        // Delete button
+        const handle = document.createElement('button');
+        handle.className = 'text-overlay-handle';
+        handle.textContent = '\u00d7';
+        handle.title = 'Delete';
+        handle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            getRectOverlays(state.currentPage).splice(idx, 1);
+            renderAllOverlays();
+        });
+        div.appendChild(handle);
+
+        // On click, populate toolbar with this rect's values
+        div.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setTool('rect');
+            rectFillIn.value = ov.fillColor;
+            rectFillOpacIn.value = ov.fillOpacity;
+            rectBorderIn.value = ov.borderColor;
+            rectBorderOpacIn.value = ov.borderOpacity;
+            rectBorderWidthIn.value = ov.borderWidth;
+            // Mark selected
+            textLayer.querySelectorAll('.rect-overlay.selected').forEach(el => el.classList.remove('selected'));
+            div.classList.add('selected');
+        });
+
+        textLayer.appendChild(div);
+        return div;
+    }
+
+    // Update selected rect when toolbar values change
+    function updateSelectedRect() {
+        const sel = textLayer.querySelector('.rect-overlay.selected');
+        if (!sel) return;
+        const idx = parseInt(sel.dataset.rectIndex, 10);
+        const ov = getRectOverlays(state.currentPage)[idx];
+        if (!ov) return;
+        ov.fillColor = rectFillIn.value;
+        ov.fillOpacity = parseInt(rectFillOpacIn.value, 10);
+        ov.borderColor = rectBorderIn.value;
+        ov.borderOpacity = parseInt(rectBorderOpacIn.value, 10);
+        ov.borderWidth = parseFloat(rectBorderWidthIn.value) || 2;
+        sel.style.backgroundColor = hexToRgba(ov.fillColor, ov.fillOpacity);
+        sel.style.border = ov.borderWidth + 'px solid ' + hexToRgba(ov.borderColor, ov.borderOpacity);
+    }
+
+    rectFillIn.addEventListener('input', updateSelectedRect);
+    rectFillOpacIn.addEventListener('input', updateSelectedRect);
+    rectBorderIn.addEventListener('input', updateSelectedRect);
+    rectBorderOpacIn.addEventListener('input', updateSelectedRect);
+    rectBorderWidthIn.addEventListener('input', updateSelectedRect);
 
     // Update focused overlay when toolbar values change
     fontSizeIn.addEventListener('input', () => {
@@ -263,16 +451,19 @@
 
     // ---- Undo / Clear ----
     undoBtn.addEventListener('click', () => {
-        const overlays = getOverlays(state.currentPage);
-        if (overlays.length) {
-            overlays.pop();
-            renderTextOverlays();
+        if (state.activeTool === 'rect') {
+            const rects = getRectOverlays(state.currentPage);
+            if (rects.length) { rects.pop(); renderAllOverlays(); }
+        } else {
+            const overlays = getOverlays(state.currentPage);
+            if (overlays.length) { overlays.pop(); renderAllOverlays(); }
         }
     });
 
     clearPageBtn.addEventListener('click', () => {
         state.textOverlays[state.currentPage] = [];
-        renderTextOverlays();
+        state.rectOverlays[state.currentPage] = [];
+        renderAllOverlays();
     });
 
     // ---- Save & Download ----
@@ -292,18 +483,62 @@
                 Courier: await pdfDoc.embedFont(StandardFonts.Courier),
             };
 
-            // Process each page's overlays
+            // Helper: get viewport for a page
+            async function getViewportForPage(pageNumStr) {
+                const pdfPage = await state.pdfDoc.getPage(parseInt(pageNumStr, 10));
+                return pdfPage.getViewport({ scale: state.scale });
+            }
+
+            function parseHex(hex) {
+                const h = hex.replace('#', '');
+                return {
+                    r: parseInt(h.substring(0, 2), 16) / 255,
+                    g: parseInt(h.substring(2, 4), 16) / 255,
+                    b: parseInt(h.substring(4, 6), 16) / 255,
+                };
+            }
+
+            // ---- Draw rectangles first (behind text) ----
+            for (const [pageNumStr, rects] of Object.entries(state.rectOverlays)) {
+                const pageIdx = parseInt(pageNumStr, 10) - 1;
+                if (pageIdx < 0 || pageIdx >= pages.length) continue;
+                const page = pages[pageIdx];
+                const { width: pageWidth, height: pageHeight } = page.getSize();
+                const viewport = await getViewportForPage(pageNumStr);
+                const canvasWidth = viewport.width;
+                const canvasHeight = viewport.height;
+
+                for (const ov of rects) {
+                    const pdfX = (ov.x / canvasWidth) * pageWidth;
+                    const pdfW = (ov.w / canvasWidth) * pageWidth;
+                    const pdfH = (ov.h / canvasHeight) * pageHeight;
+                    // Flip Y: top of rect in canvas → bottom-left origin in PDF
+                    const pdfY = pageHeight - ((ov.y / canvasHeight) * pageHeight) - pdfH;
+
+                    const fill = parseHex(ov.fillColor);
+                    const border = parseHex(ov.borderColor);
+
+                    page.drawRectangle({
+                        x: pdfX,
+                        y: pdfY,
+                        width: pdfW,
+                        height: pdfH,
+                        color: rgb(fill.r, fill.g, fill.b),
+                        opacity: ov.fillOpacity / 100,
+                        borderColor: rgb(border.r, border.g, border.b),
+                        borderOpacity: ov.borderOpacity / 100,
+                        borderWidth: ov.borderWidth / state.scale,
+                    });
+                }
+            }
+
+            // ---- Draw text overlays ----
             for (const [pageNumStr, overlays] of Object.entries(state.textOverlays)) {
                 const pageIdx = parseInt(pageNumStr, 10) - 1;
                 if (pageIdx < 0 || pageIdx >= pages.length) continue;
                 const page = pages[pageIdx];
                 const { width: pageWidth, height: pageHeight } = page.getSize();
-
-                // We need to map from canvas coords to PDF coords.
-                // Canvas size = PDF page size * scale
-                // PDF origin is bottom-left; canvas origin is top-left.
-                const pdfPage = await state.pdfDoc.getPage(parseInt(pageNumStr, 10));
-                const viewport = pdfPage.getViewport({ scale: state.scale });
+                const viewport = await getViewportForPage(pageNumStr);
                 const canvasWidth = viewport.width;
                 const canvasHeight = viewport.height;
 
@@ -311,22 +546,13 @@
                     const text = ov.text;
                     if (!text) continue;
 
-                    // Convert canvas x,y to PDF x,y
                     const pdfX = (ov.x / canvasWidth) * pageWidth;
-                    // Flip Y: canvas top-left → PDF bottom-left
-                    // Approximate text height offset
                     const scaledFontSize = (ov.fontSize / state.scale);
                     const pdfY = pageHeight - ((ov.y / canvasHeight) * pageHeight) - scaledFontSize;
 
                     const font = fonts[ov.fontFamily] || fonts.Helvetica;
+                    const c = parseHex(ov.color);
 
-                    // Parse hex color to rgb
-                    const hex = ov.color.replace('#', '');
-                    const r = parseInt(hex.substring(0, 2), 16) / 255;
-                    const g = parseInt(hex.substring(2, 4), 16) / 255;
-                    const b = parseInt(hex.substring(4, 6), 16) / 255;
-
-                    // Handle multi-line text
                     const lines = text.split('\n');
                     lines.forEach((line, lineIdx) => {
                         page.drawText(line, {
@@ -334,7 +560,7 @@
                             y: pdfY - (lineIdx * scaledFontSize * 1.2),
                             size: scaledFontSize,
                             font,
-                            color: rgb(r, g, b),
+                            color: rgb(c.r, c.g, c.b),
                         });
                     });
                 }
