@@ -115,6 +115,13 @@ header h1 {
     vertical-align: middle;
 }
 
+.opacity-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    min-width: 30px;
+    text-align: right;
+}
+
 #toolbar select {
     padding: 4px 8px;
     border: 1px solid var(--border);
@@ -322,6 +329,13 @@ main {
 
 .rect-overlay:hover .text-overlay-handle {
     display: block;
+}
+
+.rect-overlay.dragging {
+    cursor: grabbing;
+    opacity: 0.8;
+    outline: 2px dashed var(--primary);
+    outline-offset: 2px;
 }
 
 /* Drawing cursor */

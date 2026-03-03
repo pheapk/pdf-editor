@@ -20,6 +20,8 @@
         // Drag state for drawing rectangles
         drawing: false,
         drawStart: null,
+        // Drag state for moving existing rectangles
+        draggingRect: null, // { el, idx, offsetX, offsetY, startX, startY, moved }
     };
 
     // ---- DOM refs ----
@@ -54,6 +56,8 @@
     const rectBorderIn     = $('#rectBorder');
     const rectBorderOpacIn = $('#rectBorderOpacity');
     const rectBorderWidthIn = $('#rectBorderWidth');
+    const rectFillOpacLabel  = $('#rectFillOpacLabel');
+    const rectBorderOpacLabel = $('#rectBorderOpacLabel');
 
     // ---- Helpers ----
     function showLoading() { loadingOverlay.classList.remove('hidden'); }
@@ -70,11 +74,12 @@
     }
 
     function hexToRgba(hex, opacity) {
-        const h = hex.replace('#', '');
-        const r = parseInt(h.substring(0, 2), 16);
-        const g = parseInt(h.substring(2, 4), 16);
-        const b = parseInt(h.substring(4, 6), 16);
-        return `rgba(${r},${g},${b},${opacity / 100})`;
+        const h = (hex || '#000000').replace('#', '');
+        const r = parseInt(h.substring(0, 2), 16) || 0;
+        const g = parseInt(h.substring(2, 4), 16) || 0;
+        const b = parseInt(h.substring(4, 6), 16) || 0;
+        const a = Math.max(0, Math.min(1, (opacity || 0) / 100));
+        return `rgba(${r},${g},${b},${a})`;
     }
 
     // ---- File Upload ----
@@ -360,16 +365,32 @@
         });
         div.appendChild(handle);
 
-        // On click, populate toolbar with this rect's values
-        div.addEventListener('click', (e) => {
+        // Mousedown: start drag or select
+        div.addEventListener('mousedown', (e) => {
+            if (e.target === handle) return; // let delete button work
             e.stopPropagation();
+            e.preventDefault();
+
+            const layerRect = textLayer.getBoundingClientRect();
+            state.draggingRect = {
+                el: div,
+                idx,
+                offsetX: e.clientX - div.getBoundingClientRect().left,
+                offsetY: e.clientY - div.getBoundingClientRect().top,
+                startX: e.clientX,
+                startY: e.clientY,
+                moved: false,
+            };
+            div.classList.add('dragging');
+
+            // Select this rect and populate toolbar
             setTool('rect');
             rectFillIn.value = ov.fillColor;
             rectFillOpacIn.value = ov.fillOpacity;
             rectBorderIn.value = ov.borderColor;
             rectBorderOpacIn.value = ov.borderOpacity;
             rectBorderWidthIn.value = ov.borderWidth;
-            // Mark selected
+            updateOpacityLabels();
             textLayer.querySelectorAll('.rect-overlay.selected').forEach(el => el.classList.remove('selected'));
             div.classList.add('selected');
         });
@@ -394,10 +415,15 @@
         sel.style.border = ov.borderWidth + 'px solid ' + hexToRgba(ov.borderColor, ov.borderOpacity);
     }
 
+    function updateOpacityLabels() {
+        rectFillOpacLabel.textContent = rectFillOpacIn.value + '%';
+        rectBorderOpacLabel.textContent = rectBorderOpacIn.value + '%';
+    }
+
     rectFillIn.addEventListener('input', updateSelectedRect);
-    rectFillOpacIn.addEventListener('input', updateSelectedRect);
+    rectFillOpacIn.addEventListener('input', () => { updateOpacityLabels(); updateSelectedRect(); });
     rectBorderIn.addEventListener('input', updateSelectedRect);
-    rectBorderOpacIn.addEventListener('input', updateSelectedRect);
+    rectBorderOpacIn.addEventListener('input', () => { updateOpacityLabels(); updateSelectedRect(); });
     rectBorderWidthIn.addEventListener('input', updateSelectedRect);
 
     // Update focused overlay when toolbar values change
@@ -490,11 +516,11 @@
             }
 
             function parseHex(hex) {
-                const h = hex.replace('#', '');
+                const h = (hex || '#000000').replace('#', '');
                 return {
-                    r: parseInt(h.substring(0, 2), 16) / 255,
-                    g: parseInt(h.substring(2, 4), 16) / 255,
-                    b: parseInt(h.substring(4, 6), 16) / 255,
+                    r: (parseInt(h.substring(0, 2), 16) || 0) / 255,
+                    g: (parseInt(h.substring(2, 4), 16) || 0) / 255,
+                    b: (parseInt(h.substring(4, 6), 16) || 0) / 255,
                 };
             }
 
@@ -580,6 +606,49 @@
         } finally {
             hideLoading();
         }
+    });
+
+    // ---- Rectangle Dragging (document-level) ----
+    document.addEventListener('mousemove', (e) => {
+        if (!state.draggingRect) return;
+
+        const dr = state.draggingRect;
+        const dx = e.clientX - dr.startX;
+        const dy = e.clientY - dr.startY;
+
+        if (!dr.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+            dr.moved = true;
+        }
+
+        if (dr.moved) {
+            const layerRect = textLayer.getBoundingClientRect();
+            let newX = e.clientX - layerRect.left - dr.offsetX;
+            let newY = e.clientY - layerRect.top - dr.offsetY;
+
+            // Clamp within textLayer bounds
+            const ov = getRectOverlays(state.currentPage)[dr.idx];
+            newX = Math.max(0, Math.min(newX, layerRect.width - ov.w));
+            newY = Math.max(0, Math.min(newY, layerRect.height - ov.h));
+
+            dr.el.style.left = newX + 'px';
+            dr.el.style.top = newY + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!state.draggingRect) return;
+
+        const dr = state.draggingRect;
+        dr.el.classList.remove('dragging');
+
+        if (dr.moved) {
+            // Commit new position to state
+            const ov = getRectOverlays(state.currentPage)[dr.idx];
+            ov.x = parseFloat(dr.el.style.left);
+            ov.y = parseFloat(dr.el.style.top);
+        }
+
+        state.draggingRect = null;
     });
 
     // ---- Keyboard shortcuts ----
