@@ -73,13 +73,17 @@
         return state.rectOverlays[page];
     }
 
-    function hexToRgba(hex, opacity) {
-        const h = (hex || '#000000').replace('#', '');
-        const r = parseInt(h.substring(0, 2), 16) || 0;
-        const g = parseInt(h.substring(2, 4), 16) || 0;
-        const b = parseInt(h.substring(4, 6), 16) || 0;
-        const a = Math.max(0, Math.min(1, (opacity || 0) / 100));
-        return `rgba(${r},${g},${b},${a})`;
+    function hexWithAlpha(hex, opacity) {
+        let h = (hex || '#000000').replace('#', '');
+        // Normalize 3-char shorthand hex to 6-char
+        if (h.length === 3) {
+            h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+        }
+        // Ensure 6 chars, pad with zeros if needed
+        h = h.padEnd(6, '0').substring(0, 6);
+        // Convert opacity (0-100) to 2-digit hex alpha (00-ff)
+        const alpha = Math.round(Math.max(0, Math.min(100, opacity != null ? opacity : 0)) * 255 / 100);
+        return '#' + h + alpha.toString(16).padStart(2, '0');
     }
 
     // ---- File Upload ----
@@ -349,8 +353,8 @@
         div.style.top = ov.y + 'px';
         div.style.width = ov.w + 'px';
         div.style.height = ov.h + 'px';
-        div.style.backgroundColor = hexToRgba(ov.fillColor, ov.fillOpacity);
-        div.style.border = ov.borderWidth + 'px solid ' + hexToRgba(ov.borderColor, ov.borderOpacity);
+        div.style.backgroundColor = hexWithAlpha(ov.fillColor, ov.fillOpacity);
+        div.style.border = ov.borderWidth + 'px solid ' + hexWithAlpha(ov.borderColor, ov.borderOpacity);
         div.dataset.rectIndex = idx;
 
         // Delete button
@@ -411,8 +415,8 @@
         ov.borderColor = rectBorderIn.value;
         ov.borderOpacity = parseInt(rectBorderOpacIn.value, 10);
         ov.borderWidth = parseFloat(rectBorderWidthIn.value) || 2;
-        sel.style.backgroundColor = hexToRgba(ov.fillColor, ov.fillOpacity);
-        sel.style.border = ov.borderWidth + 'px solid ' + hexToRgba(ov.borderColor, ov.borderOpacity);
+        sel.style.backgroundColor = hexWithAlpha(ov.fillColor, ov.fillOpacity);
+        sel.style.border = ov.borderWidth + 'px solid ' + hexWithAlpha(ov.borderColor, ov.borderOpacity);
     }
 
     function updateOpacityLabels() {
