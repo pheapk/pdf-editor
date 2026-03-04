@@ -346,6 +346,23 @@
     });
 
     // ---- Rectangle Element Creation ----
+    function applyRectStyles(div, ov) {
+        // Fill: child div with plain hex color + CSS opacity (most reliable)
+        let fill = div.querySelector('.rect-fill');
+        if (!fill) {
+            fill = document.createElement('div');
+            fill.className = 'rect-fill';
+            div.insertBefore(fill, div.firstChild);
+        }
+        fill.style.backgroundColor = ov.fillColor;
+        fill.style.opacity = ov.fillOpacity / 100;
+
+        // Border: set individual properties (avoid shorthand parsing issues)
+        div.style.borderStyle = 'solid';
+        div.style.borderWidth = ov.borderWidth + 'px';
+        div.style.borderColor = hexWithAlpha(ov.borderColor, ov.borderOpacity);
+    }
+
     function createRectElement(ov, idx) {
         const div = document.createElement('div');
         div.className = 'rect-overlay';
@@ -353,9 +370,9 @@
         div.style.top = ov.y + 'px';
         div.style.width = ov.w + 'px';
         div.style.height = ov.h + 'px';
-        div.style.backgroundColor = hexWithAlpha(ov.fillColor, ov.fillOpacity);
-        div.style.border = ov.borderWidth + 'px solid ' + hexWithAlpha(ov.borderColor, ov.borderOpacity);
         div.dataset.rectIndex = idx;
+
+        applyRectStyles(div, ov);
 
         // Delete button
         const handle = document.createElement('button');
@@ -415,8 +432,7 @@
         ov.borderColor = rectBorderIn.value;
         ov.borderOpacity = parseInt(rectBorderOpacIn.value, 10);
         ov.borderWidth = parseFloat(rectBorderWidthIn.value) || 2;
-        sel.style.backgroundColor = hexWithAlpha(ov.fillColor, ov.fillOpacity);
-        sel.style.border = ov.borderWidth + 'px solid ' + hexWithAlpha(ov.borderColor, ov.borderOpacity);
+        applyRectStyles(sel, ov);
     }
 
     function updateOpacityLabels() {
