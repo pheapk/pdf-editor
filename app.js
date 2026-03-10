@@ -73,17 +73,13 @@
         return state.rectOverlays[page];
     }
 
-    function hexWithAlpha(hex, opacity) {
-        let h = (hex || '#000000').replace('#', '');
-        // Normalize 3-char shorthand hex to 6-char
-        if (h.length === 3) {
-            h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-        }
-        // Ensure 6 chars, pad with zeros if needed
-        h = h.padEnd(6, '0').substring(0, 6);
-        // Convert opacity (0-100) to 2-digit hex alpha (00-ff)
-        const alpha = Math.round(Math.max(0, Math.min(100, opacity != null ? opacity : 0)) * 255 / 100);
-        return '#' + h + alpha.toString(16).padStart(2, '0');
+    function hexToRgba(hex, opacityPercent) {
+        const h = (hex || '#000000').replace('#', '');
+        const r = parseInt(h.substring(0, 2), 16) || 0;
+        const g = parseInt(h.substring(2, 4), 16) || 0;
+        const b = parseInt(h.substring(4, 6), 16) || 0;
+        const a = Math.max(0, Math.min(1, (opacityPercent != null ? opacityPercent : 0) / 100));
+        return 'rgba(' + r + ', ' + g + ', ' + b + ', ' + a + ')';
     }
 
     // ---- File Upload ----
@@ -347,20 +343,10 @@
 
     // ---- Rectangle Element Creation ----
     function applyRectStyles(div, ov) {
-        // Fill: child div with plain hex color + CSS opacity (most reliable)
-        let fill = div.querySelector('.rect-fill');
-        if (!fill) {
-            fill = document.createElement('div');
-            fill.className = 'rect-fill';
-            div.insertBefore(fill, div.firstChild);
-        }
-        fill.style.backgroundColor = ov.fillColor;
-        fill.style.opacity = ov.fillOpacity / 100;
-
-        // Border: set individual properties (avoid shorthand parsing issues)
+        div.style.backgroundColor = hexToRgba(ov.fillColor, ov.fillOpacity);
         div.style.borderStyle = 'solid';
         div.style.borderWidth = ov.borderWidth + 'px';
-        div.style.borderColor = hexWithAlpha(ov.borderColor, ov.borderOpacity);
+        div.style.borderColor = hexToRgba(ov.borderColor, ov.borderOpacity);
     }
 
     function createRectElement(ov, idx) {
