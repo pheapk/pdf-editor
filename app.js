@@ -22,6 +22,8 @@
         drawStart: null,
         // Drag state for moving existing rectangles
         draggingRect: null, // { el, idx, offsetX, offsetY, startX, startY, moved }
+        // Page mapping: virtual page index → original pdf.js page number
+        pageMap: [],
     };
 
     // ---- DOM refs ----
@@ -58,6 +60,10 @@
     const rectBorderWidthIn = $('#rectBorderWidth');
     const rectFillOpacLabel  = $('#rectFillOpacLabel');
     const rectBorderOpacLabel = $('#rectBorderOpacLabel');
+    const deletePageBtn    = $('#deletePageBtn');
+    const deleteRangeBtn   = $('#deleteRangeBtn');
+    const deleteFromIn     = $('#deleteFrom');
+    const deleteToIn       = $('#deleteTo');
 
     // ---- Helpers ----
     function showLoading() { loadingOverlay.classList.remove('hidden'); }
@@ -123,6 +129,7 @@
             state.currentPage = 1;
             state.textOverlays = {};
             state.rectOverlays = {};
+            state.pageMap = Array.from({ length: state.totalPages }, (_, i) => i + 1);
 
             uploadArea.classList.add('hidden');
             editorArea.classList.remove('hidden');
@@ -138,7 +145,8 @@
 
     // ---- Page Rendering ----
     async function renderPage(num) {
-        const page = await state.pdfDoc.getPage(num);
+        const originalPageNum = state.pageMap[num - 1];
+        const page = await state.pdfDoc.getPage(originalPageNum);
         const viewport = page.getViewport({ scale: state.scale });
 
         canvas.width = viewport.width;
@@ -168,6 +176,11 @@
         pageInfo.textContent = `Page ${state.currentPage} / ${state.totalPages}`;
         prevPageBtn.disabled = state.currentPage <= 1;
         nextPageBtn.disabled = state.currentPage >= state.totalPages;
+        const onlyOnePage = state.totalPages <= 1;
+        deletePageBtn.disabled = onlyOnePage;
+        deleteRangeBtn.disabled = onlyOnePage;
+        deleteFromIn.max = state.totalPages;
+        deleteToIn.max = state.totalPages;
     }
 
     // ---- Page Navigation ----
@@ -498,6 +511,59 @@
         renderAllOverlays();
     });
 
+    // ---- Delete Pages ----
+    async function deletePages(from, to) {
+        if (from < 1 || to > state.totalPages || from > to) {
+            alert('Invalid page range. Please enter values between 1 and ' + state.totalPages + '.');
+            return;
+        }
+        const deleteCount = to - from + 1;
+        if (deleteCount >= state.totalPages) {
+            alert('Cannot delete all pages. At least one page must remain.');
+            return;
+        }
+        const msg = deleteCount === 1
+            ? 'Delete page ' + from + '?'
+            : 'Delete pages ' + from + ' to ' + to + ' (' + deleteCount + ' pages)?';
+        if (!confirm(msg)) return;
+
+        saveCurrentOverlays();
+
+        // Remove from pageMap
+        state.pageMap.splice(from - 1, deleteCount);
+
+        // Rebuild overlays with shifted keys
+        const newText = {};
+        const newRect = {};
+        for (const [key, val] of Object.entries(state.textOverlays)) {
+            const p = parseInt(key, 10);
+            if (p >= from && p <= to) continue; // deleted
+            const newP = p > to ? p - deleteCount : p;
+            newText[newP] = val;
+        }
+        for (const [key, val] of Object.entries(state.rectOverlays)) {
+            const p = parseInt(key, 10);
+            if (p >= from && p <= to) continue;
+            const newP = p > to ? p - deleteCount : p;
+            newRect[newP] = val;
+        }
+        state.textOverlays = newText;
+        state.rectOverlays = newRect;
+
+        state.totalPages -= deleteCount;
+        if (state.currentPage > state.totalPages) {
+            state.currentPage = state.totalPages;
+        }
+        await renderPage(state.currentPage);
+    }
+
+    deletePageBtn.addEventListener('click', () => deletePages(state.currentPage, state.currentPage));
+    deleteRangeBtn.addEventListener('click', () => {
+        const from = parseInt(deleteFromIn.value, 10);
+        const to = parseInt(deleteToIn.value, 10);
+        deletePages(from, to);
+    });
+
     // ---- Save & Download ----
     saveBtn.addEventListener('click', async () => {
         saveCurrentOverlays();
@@ -506,6 +572,15 @@
         try {
             const { PDFDocument, rgb, StandardFonts } = PDFLib;
             const pdfDoc = await PDFDocument.load(state.pdfBytes);
+
+            // Remove deleted pages (reverse order to preserve indices)
+            const originalPageCount = pdfDoc.getPageCount();
+            const keptPages = new Set(state.pageMap);
+            for (let i = originalPageCount - 1; i >= 0; i--) {
+                if (!keptPages.has(i + 1)) {
+                    pdfDoc.removePage(i);
+                }
+            }
             const pages = pdfDoc.getPages();
 
             // Embed standard fonts
@@ -515,9 +590,11 @@
                 Courier: await pdfDoc.embedFont(StandardFonts.Courier),
             };
 
-            // Helper: get viewport for a page
+            // Helper: get viewport for a virtual page number
             async function getViewportForPage(pageNumStr) {
-                const pdfPage = await state.pdfDoc.getPage(parseInt(pageNumStr, 10));
+                const virtualNum = parseInt(pageNumStr, 10);
+                const originalNum = state.pageMap[virtualNum - 1];
+                const pdfPage = await state.pdfDoc.getPage(originalNum);
                 return pdfPage.getViewport({ scale: state.scale });
             }
 

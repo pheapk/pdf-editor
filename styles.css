@@ -146,6 +146,16 @@ button:hover {
     border-color: #cbd5e1;
 }
 
+button.danger {
+    color: var(--danger);
+    border-color: var(--danger);
+}
+
+button.danger:hover:not(:disabled) {
+    background: var(--danger);
+    color: white;
+}
+
 button.primary {
     background: var(--primary);
     color: white;
@@ -162,6 +172,11 @@ button.primary:hover {
     color: var(--text-muted);
     min-width: 80px;
     text-align: center;
+}
+
+.toolbar-separator {
+    color: var(--text-muted);
+    font-size: 0.85rem;
 }
 
 /* Main Content */

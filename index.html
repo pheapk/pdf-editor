@@ -46,6 +46,15 @@
                 <input type="number" id="rectBorderWidth" value="2" min="0" max="20" step="0.5">
             </div>
             <div class="toolbar-group">
+                <button id="deletePageBtn" class="danger" title="Delete current page">Delete Page</button>
+                <span class="toolbar-separator">|</span>
+                <label for="deleteFrom">Del:</label>
+                <input type="number" id="deleteFrom" min="1" value="1" title="From page">
+                <span class="toolbar-separator">-</span>
+                <input type="number" id="deleteTo" min="1" value="1" title="To page">
+                <button id="deleteRangeBtn" class="danger" title="Delete page range">Delete Range</button>
+            </div>
+            <div class="toolbar-group">
                 <button id="undoBtn" title="Remove last overlay">Undo</button>
                 <button id="clearPageBtn" title="Clear all overlays on this page">Clear Page</button>
                 <button id="saveBtn" class="primary" title="Save and download PDF">Save &amp; Download</button>
