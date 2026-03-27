@@ -624,20 +624,22 @@
                     // Flip Y: top of rect in canvas → bottom-left origin in PDF
                     const pdfY = pageHeight - ((ov.y / canvasHeight) * pageHeight) - pdfH;
 
-                    const fill = parseHex(ov.fillColor);
-                    const border = parseHex(ov.borderColor);
+                    const rectOpts = { x: pdfX, y: pdfY, width: pdfW, height: pdfH };
 
-                    page.drawRectangle({
-                        x: pdfX,
-                        y: pdfY,
-                        width: pdfW,
-                        height: pdfH,
-                        color: rgb(fill.r, fill.g, fill.b),
-                        opacity: ov.fillOpacity / 100,
-                        borderColor: rgb(border.r, border.g, border.b),
-                        borderOpacity: ov.borderOpacity / 100,
-                        borderWidth: ov.borderWidth / state.scale,
-                    });
+                    if (ov.fillOpacity > 0) {
+                        const fill = parseHex(ov.fillColor);
+                        rectOpts.color = rgb(fill.r, fill.g, fill.b);
+                        rectOpts.opacity = ov.fillOpacity / 100;
+                    }
+
+                    if (ov.borderOpacity > 0 && ov.borderWidth > 0) {
+                        const border = parseHex(ov.borderColor);
+                        rectOpts.borderColor = rgb(border.r, border.g, border.b);
+                        rectOpts.borderOpacity = ov.borderOpacity / 100;
+                        rectOpts.borderWidth = ov.borderWidth / state.scale;
+                    }
+
+                    page.drawRectangle(rectOpts);
                 }
             }
 
