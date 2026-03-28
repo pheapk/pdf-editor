@@ -2,6 +2,8 @@
 
 A simple web-based PDF editor. Upload a PDF, add text anywhere on the page, and download the modified file.
 
+https://pheapk.github.io/pdf-editor/
+
 ## Features
 
 - Drag & drop or file picker PDF upload
