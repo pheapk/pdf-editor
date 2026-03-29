@@ -19,8 +19,8 @@ https://pheapk.github.io/pdf-editor/
 Clone the repo and serve with any static HTTP server:
 
 ```bash
-git clone https://github.com/<your-username>/TestClaudeCode.git
-cd TestClaudeCode
+git clone https://github.com/<your-username>/pdf-editor.git
+cd pdf-editor
 python3 -m http.server 8000
 ```
 
