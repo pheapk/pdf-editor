@@ -255,7 +255,7 @@
     // Click on textLayer to create new text box (only in text mode)
     textLayer.addEventListener('click', (e) => {
         if (state.activeTool !== 'text') return;
-        if (e.target !== textLayer) return;
+        if (e.target.closest('.text-overlay') || e.target.closest('.rect-overlay')) return;
 
         const rect = textLayer.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -279,7 +279,7 @@
     // ---- Rectangle Drawing (mousedown → mousemove → mouseup) ----
     textLayer.addEventListener('mousedown', (e) => {
         if (state.activeTool !== 'rect') return;
-        if (e.target !== textLayer) return;
+        if (e.target.closest('.text-overlay') || e.target.closest('.rect-overlay')) return;
 
         const rect = textLayer.getBoundingClientRect();
         state.drawing = true;
