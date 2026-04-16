@@ -79,13 +79,61 @@
         return state.rectOverlays[page];
     }
 
+    function normalizeHexColor(hex, fallback = '#000000') {
+        let h = String(hex || fallback).trim().replace(/^#/, '');
+        if (/^[0-9a-f]{3}$/i.test(h)) {
+            h = h.split('').map((ch) => ch + ch).join('');
+        }
+        if (!/^[0-9a-f]{6}$/i.test(h)) {
+            h = String(fallback).replace(/^#/, '');
+        }
+        return '#' + h.toLowerCase();
+    }
+
+    function parseHexColor(hex) {
+        const h = normalizeHexColor(hex).slice(1);
+        return {
+            r: Number.parseInt(h.substring(0, 2), 16),
+            g: Number.parseInt(h.substring(2, 4), 16),
+            b: Number.parseInt(h.substring(4, 6), 16),
+        };
+    }
+
+    function clampPercent(value, fallback = 100) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return fallback;
+        return Math.max(0, Math.min(100, n));
+    }
+
+    function percentToUnit(value, fallback = 100) {
+        return clampPercent(value, fallback) / 100;
+    }
+
+    function normalizeBorderWidth(value, fallback = 2) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return fallback;
+        return Math.max(0, n);
+    }
+
     function hexToRgba(hex, opacityPercent) {
-        const h = (hex || '#000000').replace('#', '');
-        const r = parseInt(h.substring(0, 2), 16) || 0;
-        const g = parseInt(h.substring(2, 4), 16) || 0;
-        const b = parseInt(h.substring(4, 6), 16) || 0;
-        const a = Math.max(0, Math.min(1, (opacityPercent != null ? opacityPercent : 0) / 100));
-        return 'rgba(' + r + ', ' + g + ', ' + b + ', ' + a + ')';
+        const c = parseHexColor(hex);
+        const a = percentToUnit(opacityPercent, 0);
+        return 'rgba(' + c.r + ', ' + c.g + ', ' + c.b + ', ' + a + ')';
+    }
+
+    function getEditableText(el) {
+        return (el.innerText || el.textContent || '').replace(/\r\n/g, '\n').replace(/\u00a0/g, ' ');
+    }
+
+    function focusTextContent(el) {
+        el.focus();
+        const selection = window.getSelection();
+        if (!selection) return;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
     }
 
     // ---- File Upload ----
@@ -202,14 +250,20 @@
     function createOverlayElement(ov, idx) {
         const div = document.createElement('div');
         div.className = 'text-overlay';
-        div.contentEditable = true;
-        div.textContent = ov.text;
         div.style.left = ov.x + 'px';
         div.style.top = ov.y + 'px';
         div.style.fontSize = ov.fontSize + 'px';
         div.style.color = ov.color;
         div.style.fontFamily = mapFont(ov.fontFamily);
         div.dataset.index = idx;
+
+        const content = document.createElement('div');
+        content.className = 'text-overlay-content';
+        content.contentEditable = true;
+        content.spellcheck = false;
+        content.textContent = ov.text;
+        content.dataset.index = idx;
+        div.appendChild(content);
 
         // Delete button
         const handle = document.createElement('button');
@@ -224,19 +278,20 @@
         div.appendChild(handle);
 
         // Sync edits back to state
-        div.addEventListener('input', () => {
-            getOverlays(state.currentPage)[idx].text = div.textContent;
+        content.addEventListener('input', () => {
+            const overlay = getOverlays(state.currentPage)[idx];
+            if (overlay) overlay.text = getEditableText(content);
         });
 
         // When focused, update toolbar controls to match this overlay
-        div.addEventListener('focus', () => {
+        content.addEventListener('focus', () => {
             fontSizeIn.value = ov.fontSize;
             fontColorIn.value = ov.color;
             fontFamilyIn.value = ov.fontFamily;
         });
 
         textLayer.appendChild(div);
-        return div;
+        return content;
     }
 
     // ---- Tool Switching ----
@@ -273,7 +328,7 @@
         getOverlays(state.currentPage).push(overlay);
         const idx = getOverlays(state.currentPage).length - 1;
         const el = createOverlayElement(overlay, idx);
-        el.focus();
+        focusTextContent(el);
     });
 
     // ---- Rectangle Drawing (mousedown → mousemove → mouseup) ----
@@ -343,11 +398,11 @@
 
         const overlay = {
             x, y, w, h,
-            fillColor: rectFillIn.value,
-            fillOpacity: parseInt(rectFillOpacIn.value, 10),
-            borderColor: rectBorderIn.value,
-            borderOpacity: parseInt(rectBorderOpacIn.value, 10),
-            borderWidth: parseFloat(rectBorderWidthIn.value) || 2,
+            fillColor: normalizeHexColor(rectFillIn.value),
+            fillOpacity: clampPercent(rectFillOpacIn.value, 20),
+            borderColor: normalizeHexColor(rectBorderIn.value),
+            borderOpacity: clampPercent(rectBorderOpacIn.value, 100),
+            borderWidth: normalizeBorderWidth(rectBorderWidthIn.value),
         };
 
         getRectOverlays(state.currentPage).push(overlay);
@@ -358,7 +413,7 @@
     function applyRectStyles(div, ov) {
         div.style.backgroundColor = hexToRgba(ov.fillColor, ov.fillOpacity);
         div.style.borderStyle = 'solid';
-        div.style.borderWidth = ov.borderWidth + 'px';
+        div.style.borderWidth = normalizeBorderWidth(ov.borderWidth, 0) + 'px';
         div.style.borderColor = hexToRgba(ov.borderColor, ov.borderOpacity);
     }
 
@@ -426,11 +481,11 @@
         const idx = parseInt(sel.dataset.rectIndex, 10);
         const ov = getRectOverlays(state.currentPage)[idx];
         if (!ov) return;
-        ov.fillColor = rectFillIn.value;
-        ov.fillOpacity = parseInt(rectFillOpacIn.value, 10);
-        ov.borderColor = rectBorderIn.value;
-        ov.borderOpacity = parseInt(rectBorderOpacIn.value, 10);
-        ov.borderWidth = parseFloat(rectBorderWidthIn.value) || 2;
+        ov.fillColor = normalizeHexColor(rectFillIn.value);
+        ov.fillOpacity = clampPercent(rectFillOpacIn.value, 20);
+        ov.borderColor = normalizeHexColor(rectBorderIn.value);
+        ov.borderOpacity = clampPercent(rectBorderOpacIn.value, 100);
+        ov.borderWidth = normalizeBorderWidth(rectBorderWidthIn.value);
         applyRectStyles(sel, ov);
     }
 
@@ -447,30 +502,31 @@
 
     // Update focused overlay when toolbar values change
     fontSizeIn.addEventListener('input', () => {
-        const focused = textLayer.querySelector('.text-overlay:focus');
+        const focused = textLayer.querySelector('.text-overlay-content:focus');
         if (focused) {
             const idx = parseInt(focused.dataset.index, 10);
             const val = parseInt(fontSizeIn.value, 10) || 16;
             getOverlays(state.currentPage)[idx].fontSize = val;
+            focused.closest('.text-overlay').style.fontSize = val + 'px';
             focused.style.fontSize = val + 'px';
         }
     });
 
     fontColorIn.addEventListener('input', () => {
-        const focused = textLayer.querySelector('.text-overlay:focus');
+        const focused = textLayer.querySelector('.text-overlay-content:focus');
         if (focused) {
             const idx = parseInt(focused.dataset.index, 10);
             getOverlays(state.currentPage)[idx].color = fontColorIn.value;
-            focused.style.color = fontColorIn.value;
+            focused.closest('.text-overlay').style.color = fontColorIn.value;
         }
     });
 
     fontFamilyIn.addEventListener('change', () => {
-        const focused = textLayer.querySelector('.text-overlay:focus');
+        const focused = textLayer.querySelector('.text-overlay-content:focus');
         if (focused) {
             const idx = parseInt(focused.dataset.index, 10);
             getOverlays(state.currentPage)[idx].fontFamily = fontFamilyIn.value;
-            focused.style.fontFamily = mapFont(fontFamilyIn.value);
+            focused.closest('.text-overlay').style.fontFamily = mapFont(fontFamilyIn.value);
         }
     });
 
@@ -489,7 +545,8 @@
         const overlays = getOverlays(state.currentPage);
         elems.forEach((el, i) => {
             if (overlays[i]) {
-                overlays[i].text = el.textContent.replace('\u00d7', '').trim();
+                const content = el.querySelector('.text-overlay-content');
+                overlays[i].text = content ? getEditableText(content).trimEnd() : '';
             }
         });
     }
@@ -598,12 +655,12 @@
                 return pdfPage.getViewport({ scale: state.scale });
             }
 
-            function parseHex(hex) {
-                const h = (hex || '#000000').replace('#', '');
+            function parsePdfColor(hex) {
+                const c = parseHexColor(hex);
                 return {
-                    r: (parseInt(h.substring(0, 2), 16) || 0) / 255,
-                    g: (parseInt(h.substring(2, 4), 16) || 0) / 255,
-                    b: (parseInt(h.substring(4, 6), 16) || 0) / 255,
+                    r: c.r / 255,
+                    g: c.g / 255,
+                    b: c.b / 255,
                 };
             }
 
@@ -626,17 +683,28 @@
 
                     const rectOpts = { x: pdfX, y: pdfY, width: pdfW, height: pdfH };
 
-                    if (ov.fillOpacity > 0) {
-                        const fill = parseHex(ov.fillColor);
+                    const fillOpacity = clampPercent(ov.fillOpacity, 0);
+                    const borderOpacity = clampPercent(ov.borderOpacity, 0);
+                    const borderWidth = normalizeBorderWidth(ov.borderWidth, 0);
+                    const hasFill = fillOpacity > 0;
+                    const hasBorder = borderOpacity > 0 && borderWidth > 0;
+
+                    if (!hasFill && !hasBorder) continue;
+
+                    if (hasFill) {
+                        const fill = parsePdfColor(ov.fillColor);
                         rectOpts.color = rgb(fill.r, fill.g, fill.b);
-                        rectOpts.opacity = ov.fillOpacity / 100;
+                        rectOpts.opacity = fillOpacity / 100;
+                    } else {
+                        rectOpts.color = rgb(1, 1, 1);
+                        rectOpts.opacity = 0;
                     }
 
-                    if (ov.borderOpacity > 0 && ov.borderWidth > 0) {
-                        const border = parseHex(ov.borderColor);
+                    if (hasBorder) {
+                        const border = parsePdfColor(ov.borderColor);
                         rectOpts.borderColor = rgb(border.r, border.g, border.b);
-                        rectOpts.borderOpacity = ov.borderOpacity / 100;
-                        rectOpts.borderWidth = ov.borderWidth / state.scale;
+                        rectOpts.borderOpacity = borderOpacity / 100;
+                        rectOpts.borderWidth = borderWidth / state.scale;
                     }
 
                     page.drawRectangle(rectOpts);
@@ -662,7 +730,7 @@
                     const pdfY = pageHeight - ((ov.y / canvasHeight) * pageHeight) - scaledFontSize;
 
                     const font = fonts[ov.fontFamily] || fonts.Helvetica;
-                    const c = parseHex(ov.color);
+                    const c = parsePdfColor(ov.color);
 
                     const lines = text.split('\n');
                     lines.forEach((line, lineIdx) => {
