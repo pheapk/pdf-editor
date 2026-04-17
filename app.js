@@ -146,6 +146,11 @@
 
     fileInput.addEventListener('change', (e) => {
         if (e.target.files.length) handleFile(e.target.files[0]);
+        // BUGFIX: reset the input's value so selecting the SAME file a second
+        // time still fires a `change` event. Without this, re-uploading the
+        // exact same file (e.g. after editing it externally) silently no-ops
+        // because the browser considers the value unchanged.
+        e.target.value = '';
     });
 
     dropZone.addEventListener('dragover', (e) => {
@@ -374,12 +379,26 @@
         }
     });
 
-    textLayer.addEventListener('mouseup', (e) => {
+    // BUGFIX: mouseup is bound to `document` (not `textLayer`) on purpose.
+    // Previously this listener lived on textLayer, so if the user started a
+    // drag inside the canvas but released the mouse OUTSIDE it (e.g. over the
+    // toolbar or off the window edge), mouseup would never fire here:
+    //   - state.drawing stayed `true`,
+    //   - the #rectPreview ghost div was never removed, and
+    //   - the next mousedown saw stale state and produced a broken rect.
+    // Binding on document guarantees we always see the mouse release no matter
+    // where it lands, so we can finalize (or cancel) the draw cleanly.
+    document.addEventListener('mouseup', (e) => {
         if (!state.drawing || !state.drawStart) return;
 
         const rect = textLayer.getBoundingClientRect();
-        const endX = e.clientX - rect.left;
-        const endY = e.clientY - rect.top;
+        // Clamp the release point to the textLayer bounds. If the user dragged
+        // off-canvas, we still produce a rectangle that ends at the edge
+        // rather than extending past it with negative/overflowing coords.
+        const rawX = e.clientX - rect.left;
+        const rawY = e.clientY - rect.top;
+        const endX = Math.max(0, Math.min(rect.width, rawX));
+        const endY = Math.max(0, Math.min(rect.height, rawY));
 
         const x = Math.min(state.drawStart.x, endX);
         const y = Math.min(state.drawStart.y, endY);
@@ -683,8 +702,16 @@
 
                     const rectOpts = { x: pdfX, y: pdfY, width: pdfW, height: pdfH };
 
-                    const fillOpacity = clampPercent(ov.fillOpacity, 0);
-                    const borderOpacity = clampPercent(ov.borderOpacity, 0);
+                    // BUGFIX: fallbacks were both `0` here, but at creation
+                    // time (mouseup handler) the defaults are 20 for fill and
+                    // 100 for border. If an overlay somehow arrived missing
+                    // these fields (e.g. legacy state, crash/restore), the
+                    // saved PDF would render invisibly while the on-screen
+                    // preview showed it at the UI defaults — a confusing
+                    // "save loses my rectangle" bug. Keep the save-time
+                    // fallbacks aligned with creation-time defaults.
+                    const fillOpacity = clampPercent(ov.fillOpacity, 20);
+                    const borderOpacity = clampPercent(ov.borderOpacity, 100);
                     const borderWidth = normalizeBorderWidth(ov.borderWidth, 0);
                     const hasFill = fillOpacity > 0;
                     const hasBorder = borderOpacity > 0 && borderWidth > 0;
@@ -805,9 +832,26 @@
     });
 
     // ---- Keyboard shortcuts ----
+    // BUGFIX: isEditingField() replaces the old `tagName !== 'DIV'` check.
+    //   The previous guard was wrong in two ways:
+    //     1. It blocked our Ctrl+Z any time focus was on ANY div — but our
+    //        text overlays are the ONLY divs we actually want to exempt, and
+    //        we really only care that they're contentEditable.
+    //     2. It did NOT exempt <input>/<textarea>/<select> (font size, color
+    //        picker, page range, etc.). Pressing Ctrl+Z inside those fields
+    //        should trigger the browser's native undo on that field, not pop
+    //        an overlay off the page.
+    //   Using `isContentEditable` + form-field tag names fixes both cases.
+    function isEditingField(el) {
+        if (!el) return false;
+        if (el.isContentEditable) return true;
+        const tag = el.tagName;
+        return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    }
+
     document.addEventListener('keydown', (e) => {
-        // Ctrl+Z to undo (only when not editing text)
-        if (e.ctrlKey && e.key === 'z' && document.activeElement.tagName !== 'DIV') {
+        // Ctrl+Z to undo (only when not editing text / in a form field)
+        if (e.ctrlKey && e.key === 'z' && !isEditingField(document.activeElement)) {
             e.preventDefault();
             undoBtn.click();
         }
