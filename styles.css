@@ -282,10 +282,26 @@ main {
     position: absolute;
     background: transparent;
     border: 1px dashed transparent;
+    /* BUGFIX (text drag): the outer wrapper needs a real hit area for
+       dragging. Without padding the only draggable zone would be the 1px
+       dashed border — essentially unclickable. 4px padding gives users a
+       visible grab region between the dashed outline (which appears on
+       hover/focus) and the inner editable content. Note: this introduces
+       a small visual offset between the on-screen text position and the
+       saved PDF coordinates, consistent with the existing 2–4px offset
+       already caused by .text-overlay-content padding. */
+    padding: 4px;
     min-width: 40px;
     min-height: 1.2em;
-    cursor: text;
+    /* outer wrapper shows the "move" cursor so the padding area reads as
+       a drag handle. The inner .text-overlay-content overrides back to
+       `text` cursor below so clicking inside still feels like editing. */
+    cursor: move;
     outline: none;
+}
+
+.text-overlay.dragging {
+    opacity: 0.8;
 }
 
 .text-overlay-content {
@@ -297,6 +313,8 @@ main {
     word-break: break-word;
     white-space: pre-wrap;
     line-height: 1.2;
+    /* See .text-overlay cursor comment: inner content is the edit zone. */
+    cursor: text;
 }
 
 .text-overlay:focus-within,
