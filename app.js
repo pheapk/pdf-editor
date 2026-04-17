@@ -22,6 +22,11 @@
         drawStart: null,
         // Drag state for moving existing rectangles
         draggingRect: null, // { el, idx, offsetX, offsetY, startX, startY, moved }
+        // Drag state for moving existing text overlays. Same shape as
+        // draggingRect. Added because text overlays were not movable
+        // previously — only rectangles had a drag handler. Now both kinds of
+        // overlay reuse the same document-level mousemove/mouseup pipeline.
+        draggingText: null, // { el, idx, offsetX, offsetY, startX, startY, moved }
         // Page mapping: virtual page index → original pdf.js page number
         pageMap: [],
     };
@@ -268,6 +273,15 @@
         content.spellcheck = false;
         content.textContent = ov.text;
         content.dataset.index = idx;
+        // BUGFIX (text color rendered gray): color was only being set on the
+        // outer wrapper div and we relied on CSS inheritance to cascade into
+        // the contentEditable child. In some browser/CSS combinations the
+        // contentEditable element doesn't inherit `color` cleanly (e.g. user-
+        // agent styles on editable regions, or interaction with the
+        // :focus-within background rule making dark text look washed out).
+        // Setting color directly on the content element guarantees the
+        // chosen color actually renders.
+        content.style.color = ov.color;
         div.appendChild(content);
 
         // Delete button
@@ -295,6 +309,40 @@
             fontFamilyIn.value = ov.fontFamily;
         });
 
+        // BUGFIX (text drag): text overlays used to be pinned wherever they
+        // were first placed — there was no drag handler at all. Now we bind
+        // mousedown to the OUTER wrapper (`.text-overlay`) and explicitly
+        // ignore events originating on the inner content (`.text-overlay-
+        // content`) or the delete button. That split preserves the existing
+        // interactions:
+        //   - click inside the text  → focuses contentEditable for editing
+        //   - click on the × handle  → deletes the overlay
+        //   - mousedown on the 1px dashed border area (the ~4px margin the
+        //     outer div exposes around the content) → begins a drag
+        // We reuse the document-level mousemove/mouseup pipeline below by
+        // populating `state.draggingText` with the same {el, idx, offset,
+        // start, moved} shape already used by `state.draggingRect`.
+        div.addEventListener('mousedown', (e) => {
+            if (e.target === content || content.contains(e.target)) return;
+            if (e.target === handle) return;
+            // Don't swallow the event if the user is actively editing —
+            // a mousedown on the border while focused would otherwise blur
+            // the content and feel jarring. Let blur happen naturally first.
+            e.preventDefault();
+
+            const r = div.getBoundingClientRect();
+            state.draggingText = {
+                el: div,
+                idx,
+                offsetX: e.clientX - r.left,
+                offsetY: e.clientY - r.top,
+                startX: e.clientX,
+                startY: e.clientY,
+                moved: false,
+            };
+            div.classList.add('dragging');
+        });
+
         textLayer.appendChild(div);
         return content;
     }
@@ -303,6 +351,20 @@
     toolTextBtn.addEventListener('click', () => setTool('text'));
     toolRectBtn.addEventListener('click', () => setTool('rect'));
 
+    // BUGFIX (rect cross-contamination): Centralizes the "deselect every rect"
+    // operation. `updateSelectedRect()` mutates whichever rect still has the
+    // `.selected` class, so a stale selection from an earlier click causes
+    // every toolbar slider change to silently rewrite that old rect — which
+    // surfaced to the user as "drawing a new rect changed my old one" and
+    // also as "opacity doesn't always work" (they were dragging the slider
+    // while an invisible old rect was receiving the update instead of the
+    // new one they expected). Call this before starting any new draw,
+    // switching tools, or clicking on empty canvas.
+    function clearRectSelection() {
+        textLayer.querySelectorAll('.rect-overlay.selected')
+            .forEach((el) => el.classList.remove('selected'));
+    }
+
     function setTool(tool) {
         state.activeTool = tool;
         toolTextBtn.classList.toggle('active', tool === 'text');
@@ -310,12 +372,20 @@
         textControls.classList.toggle('hidden', tool !== 'text');
         rectControls.classList.toggle('hidden', tool !== 'rect');
         textLayer.classList.toggle('drawing-rect', tool === 'rect');
+        // Switching tools should never leave a rect "selected" for the next
+        // tool's toolbar inputs to accidentally mutate. See clearRectSelection.
+        clearRectSelection();
     }
 
     // Click on textLayer to create new text box (only in text mode)
     textLayer.addEventListener('click', (e) => {
         if (state.activeTool !== 'text') return;
         if (e.target.closest('.text-overlay') || e.target.closest('.rect-overlay')) return;
+
+        // Clicking empty canvas in text mode is an unambiguous "I'm done with
+        // that rect I had selected" signal — drop the selection so later
+        // toolbar tweaks don't silently rewrite it. (See clearRectSelection.)
+        clearRectSelection();
 
         const rect = textLayer.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -326,7 +396,13 @@
             y,
             text: '',
             fontSize: parseInt(fontSizeIn.value, 10) || 16,
-            color: fontColorIn.value || '#000000',
+            // BUGFIX (text color): normalize through normalizeHexColor() to
+            // match how rect creation handles its color inputs (see
+            // mouseup handler further down). Previously this was a raw
+            // `fontColorIn.value || '#000000'`, so any unexpected value
+            // format silently slipped through and broke downstream CSS
+            // inheritance / PDF rendering.
+            color: normalizeHexColor(fontColorIn.value, '#000000'),
             fontFamily: fontFamilyIn.value || 'Helvetica',
         };
 
@@ -340,6 +416,14 @@
     textLayer.addEventListener('mousedown', (e) => {
         if (state.activeTool !== 'rect') return;
         if (e.target.closest('.text-overlay') || e.target.closest('.rect-overlay')) return;
+
+        // BUGFIX (rect cross-contamination): MUST clear the previous selection
+        // BEFORE we start a new draw. Otherwise the prior `.selected` rect
+        // remains the target of `updateSelectedRect()` — and once the user
+        // finishes the new draw and starts tweaking toolbar values for it,
+        // those values are written to the OLD rect (or both). See
+        // clearRectSelection() comment for the full chain.
+        clearRectSelection();
 
         const rect = textLayer.getBoundingClientRect();
         state.drawing = true;
@@ -535,8 +619,15 @@
         const focused = textLayer.querySelector('.text-overlay-content:focus');
         if (focused) {
             const idx = parseInt(focused.dataset.index, 10);
-            getOverlays(state.currentPage)[idx].color = fontColorIn.value;
-            focused.closest('.text-overlay').style.color = fontColorIn.value;
+            // BUGFIX (text color): normalize the color before storing/applying
+            // it, and set it on BOTH the outer wrapper and the inner
+            // contentEditable div. Previously only the wrapper was styled
+            // and we relied on CSS inheritance — which failed in some
+            // browsers, making the chosen color render as the body default.
+            const color = normalizeHexColor(fontColorIn.value, '#000000');
+            getOverlays(state.currentPage)[idx].color = color;
+            focused.closest('.text-overlay').style.color = color;
+            focused.style.color = color;
         }
     });
 
@@ -722,10 +813,16 @@
                         const fill = parsePdfColor(ov.fillColor);
                         rectOpts.color = rgb(fill.r, fill.g, fill.b);
                         rectOpts.opacity = fillOpacity / 100;
-                    } else {
-                        rectOpts.color = rgb(1, 1, 1);
-                        rectOpts.opacity = 0;
                     }
+                    // BUGFIX (opacity): previously the else-branch set
+                    // `color: rgb(1,1,1); opacity: 0` as a "transparent white
+                    // fill" workaround. That worked visually but caused
+                    // pdf-lib to still emit a fill operator into the PDF —
+                    // which some PDF viewers render as a faint white box
+                    // over the page content, making border-only rectangles
+                    // look wrong. When the user wants border-only, leave
+                    // `color` and `opacity` unset so pdf-lib skips the fill
+                    // operator entirely and only emits the stroke.
 
                     if (hasBorder) {
                         const border = parsePdfColor(ov.borderColor);
@@ -788,11 +885,16 @@
         }
     });
 
-    // ---- Rectangle Dragging (document-level) ----
+    // ---- Overlay Dragging (document-level) ----
+    // Both rect and text drags reuse the same document-level handlers so that
+    // releasing the mouse anywhere on the page — even outside the canvas —
+    // still terminates the drag cleanly. `state.draggingRect` and
+    // `state.draggingText` use the same shape; whichever one is non-null
+    // identifies which kind of overlay is being dragged.
     document.addEventListener('mousemove', (e) => {
-        if (!state.draggingRect) return;
+        const dr = state.draggingRect || state.draggingText;
+        if (!dr) return;
 
-        const dr = state.draggingRect;
         const dx = e.clientX - dr.startX;
         const dy = e.clientY - dr.startY;
 
@@ -805,10 +907,18 @@
             let newX = e.clientX - layerRect.left - dr.offsetX;
             let newY = e.clientY - layerRect.top - dr.offsetY;
 
-            // Clamp within textLayer bounds
-            const ov = getRectOverlays(state.currentPage)[dr.idx];
-            newX = Math.max(0, Math.min(newX, layerRect.width - ov.w));
-            newY = Math.max(0, Math.min(newY, layerRect.height - ov.h));
+            // Clamp within textLayer bounds. For rects we know the size from
+            // state (ov.w/ov.h). For text overlays the size is driven by
+            // content and can change as the user edits, so measure the
+            // element's current rendered size instead.
+            if (state.draggingRect) {
+                const ov = getRectOverlays(state.currentPage)[dr.idx];
+                newX = Math.max(0, Math.min(newX, layerRect.width - ov.w));
+                newY = Math.max(0, Math.min(newY, layerRect.height - ov.h));
+            } else {
+                newX = Math.max(0, Math.min(newX, layerRect.width - dr.el.offsetWidth));
+                newY = Math.max(0, Math.min(newY, layerRect.height - dr.el.offsetHeight));
+            }
 
             dr.el.style.left = newX + 'px';
             dr.el.style.top = newY + 'px';
@@ -816,19 +926,25 @@
     });
 
     document.addEventListener('mouseup', () => {
-        if (!state.draggingRect) return;
+        const dr = state.draggingRect || state.draggingText;
+        if (!dr) return;
 
-        const dr = state.draggingRect;
         dr.el.classList.remove('dragging');
 
         if (dr.moved) {
-            // Commit new position to state
-            const ov = getRectOverlays(state.currentPage)[dr.idx];
-            ov.x = parseFloat(dr.el.style.left);
-            ov.y = parseFloat(dr.el.style.top);
+            // Commit new position back to state. Use the correct overlay
+            // array depending on which drag was in flight.
+            const ov = state.draggingRect
+                ? getRectOverlays(state.currentPage)[dr.idx]
+                : getOverlays(state.currentPage)[dr.idx];
+            if (ov) {
+                ov.x = parseFloat(dr.el.style.left);
+                ov.y = parseFloat(dr.el.style.top);
+            }
         }
 
         state.draggingRect = null;
+        state.draggingText = null;
     });
 
     // ---- Keyboard shortcuts ----
