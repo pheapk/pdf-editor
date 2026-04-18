@@ -13,10 +13,19 @@
         totalPages: 0,
         scale: 1.5,
         activeTool: 'text',   // 'text' or 'rect'
-        // textOverlays[pageNum] = [ { x, y, text, fontSize, color, fontFamily } ]
+        // textOverlays[pageNum] = [ { x, y, text, fontSize, color, fontFamily, z } ]
         textOverlays: {},
-        // rectOverlays[pageNum] = [ { x, y, w, h, fillColor, fillOpacity, borderColor, borderOpacity, borderWidth } ]
+        // rectOverlays[pageNum] = [ { x, y, w, h, fillColor, fillOpacity, borderColor, borderOpacity, borderWidth, z } ]
         rectOverlays: {},
+        // BUGFIX (rect doesn't cover text): every overlay gets a monotonically
+        // increasing `z` at creation. renderAllOverlays() and the save handler
+        // both sort by z so later-created overlays paint on top of earlier
+        // ones regardless of type. Previously rects were always rendered
+        // before text, so a 100%-opaque rect drawn after text still had text
+        // visibly bleeding through — both in the editor preview and in the
+        // saved PDF. Page number doesn't matter for the counter (no two
+        // overlays can share a page AND a z).
+        nextZ: 0,
         // Drag state for drawing rectangles
         drawing: false,
         drawStart: null,
@@ -235,14 +244,22 @@
         // just been wiped and indices may shift (delete/undo/page change).
         // See state.lastFocusedTextIdx docstring.
         state.lastFocusedTextIdx = null;
-        // Render rects first (behind text)
-        getRectOverlays(state.currentPage).forEach((ov, idx) => {
-            createRectElement(ov, idx);
-        });
-        // Then text on top
-        getOverlays(state.currentPage).forEach((ov, idx) => {
-            createOverlayElement(ov, idx);
-        });
+
+        // Paint by creation order (z): later overlays stack on top. Both kinds
+        // append to the same parent, so DOM append order IS paint order.
+        // Array.sort is stable in modern engines, so missing/duplicate z
+        // values fall back to insertion order without re-shuffling.
+        const rects = getRectOverlays(state.currentPage);
+        const texts = getOverlays(state.currentPage);
+        const items = [
+            ...rects.map((ov, idx) => ({ kind: 'rect', ov, idx })),
+            ...texts.map((ov, idx) => ({ kind: 'text', ov, idx })),
+        ].sort((a, b) => (a.ov.z || 0) - (b.ov.z || 0));
+
+        for (const item of items) {
+            if (item.kind === 'rect') createRectElement(item.ov, item.idx);
+            else createOverlayElement(item.ov, item.idx);
+        }
     }
 
     function updatePageInfo() {
@@ -425,6 +442,7 @@
             // inheritance / PDF rendering.
             color: normalizeHexColor(fontColorIn.value, '#000000'),
             fontFamily: fontFamilyIn.value || 'Helvetica',
+            z: state.nextZ++,
         };
 
         getOverlays(state.currentPage).push(overlay);
@@ -527,6 +545,7 @@
             borderColor: normalizeHexColor(rectBorderIn.value),
             borderOpacity: clampPercent(rectBorderOpacIn.value, 100),
             borderWidth: normalizeBorderWidth(rectBorderWidthIn.value),
+            z: state.nextZ++,
         };
 
         getRectOverlays(state.currentPage).push(overlay);
@@ -822,8 +841,18 @@
                 };
             }
 
-            // ---- Draw rectangles first (behind text) ----
-            for (const [pageNumStr, rects] of Object.entries(state.rectOverlays)) {
+            // ---- Draw overlays in creation order (z) so later ones cover earlier ones ----
+            // BUGFIX (rect doesn't cover text): previously rects were drawn in
+            // one pass, then text in a second pass, so a 100%-opaque rect
+            // drawn after text still had text bleeding through in the output
+            // PDF. We now merge both kinds per-page, sort by z, and emit
+            // pdf-lib draw calls in that order — pdf-lib paints in call order.
+            const allPageKeys = new Set([
+                ...Object.keys(state.rectOverlays),
+                ...Object.keys(state.textOverlays),
+            ]);
+
+            for (const pageNumStr of allPageKeys) {
                 const pageIdx = parseInt(pageNumStr, 10) - 1;
                 if (pageIdx < 0 || pageIdx >= pages.length) continue;
                 const page = pages[pageIdx];
@@ -832,88 +861,78 @@
                 const canvasWidth = viewport.width;
                 const canvasHeight = viewport.height;
 
-                for (const ov of rects) {
-                    const pdfX = (ov.x / canvasWidth) * pageWidth;
-                    const pdfW = (ov.w / canvasWidth) * pageWidth;
-                    const pdfH = (ov.h / canvasHeight) * pageHeight;
-                    // Flip Y: top of rect in canvas → bottom-left origin in PDF
-                    const pdfY = pageHeight - ((ov.y / canvasHeight) * pageHeight) - pdfH;
+                const rects = state.rectOverlays[pageNumStr] || [];
+                const texts = state.textOverlays[pageNumStr] || [];
+                const items = [
+                    ...rects.map(ov => ({ kind: 'rect', ov })),
+                    ...texts.map(ov => ({ kind: 'text', ov })),
+                ].sort((a, b) => (a.ov.z || 0) - (b.ov.z || 0));
 
-                    const rectOpts = { x: pdfX, y: pdfY, width: pdfW, height: pdfH };
+                for (const { kind, ov } of items) {
+                    if (kind === 'rect') {
+                        const pdfX = (ov.x / canvasWidth) * pageWidth;
+                        const pdfW = (ov.w / canvasWidth) * pageWidth;
+                        const pdfH = (ov.h / canvasHeight) * pageHeight;
+                        // Flip Y: top of rect in canvas → bottom-left origin in PDF
+                        const pdfY = pageHeight - ((ov.y / canvasHeight) * pageHeight) - pdfH;
 
-                    // BUGFIX: fallbacks were both `0` here, but at creation
-                    // time (mouseup handler) the defaults are 20 for fill and
-                    // 100 for border. If an overlay somehow arrived missing
-                    // these fields (e.g. legacy state, crash/restore), the
-                    // saved PDF would render invisibly while the on-screen
-                    // preview showed it at the UI defaults — a confusing
-                    // "save loses my rectangle" bug. Keep the save-time
-                    // fallbacks aligned with creation-time defaults.
-                    const fillOpacity = clampPercent(ov.fillOpacity, 20);
-                    const borderOpacity = clampPercent(ov.borderOpacity, 100);
-                    const borderWidth = normalizeBorderWidth(ov.borderWidth, 0);
-                    const hasFill = fillOpacity > 0;
-                    const hasBorder = borderOpacity > 0 && borderWidth > 0;
+                        const rectOpts = { x: pdfX, y: pdfY, width: pdfW, height: pdfH };
 
-                    if (!hasFill && !hasBorder) continue;
+                        // BUGFIX: fallbacks were both `0` here, but at creation
+                        // time (mouseup handler) the defaults are 20 for fill
+                        // and 100 for border. Keep save-time fallbacks
+                        // aligned with creation-time defaults so an overlay
+                        // missing these fields still renders at the UI default.
+                        const fillOpacity = clampPercent(ov.fillOpacity, 20);
+                        const borderOpacity = clampPercent(ov.borderOpacity, 100);
+                        const borderWidth = normalizeBorderWidth(ov.borderWidth, 0);
+                        const hasFill = fillOpacity > 0;
+                        const hasBorder = borderOpacity > 0 && borderWidth > 0;
 
-                    if (hasFill) {
-                        const fill = parsePdfColor(ov.fillColor);
-                        rectOpts.color = rgb(fill.r, fill.g, fill.b);
-                        rectOpts.opacity = fillOpacity / 100;
-                    }
-                    // BUGFIX (opacity): previously the else-branch set
-                    // `color: rgb(1,1,1); opacity: 0` as a "transparent white
-                    // fill" workaround. That worked visually but caused
-                    // pdf-lib to still emit a fill operator into the PDF —
-                    // which some PDF viewers render as a faint white box
-                    // over the page content, making border-only rectangles
-                    // look wrong. When the user wants border-only, leave
-                    // `color` and `opacity` unset so pdf-lib skips the fill
-                    // operator entirely and only emits the stroke.
+                        if (!hasFill && !hasBorder) continue;
 
-                    if (hasBorder) {
-                        const border = parsePdfColor(ov.borderColor);
-                        rectOpts.borderColor = rgb(border.r, border.g, border.b);
-                        rectOpts.borderOpacity = borderOpacity / 100;
-                        rectOpts.borderWidth = borderWidth / state.scale;
-                    }
+                        if (hasFill) {
+                            const fill = parsePdfColor(ov.fillColor);
+                            rectOpts.color = rgb(fill.r, fill.g, fill.b);
+                            rectOpts.opacity = fillOpacity / 100;
+                        }
+                        // BUGFIX (opacity): previously the else-branch set
+                        // `color: rgb(1,1,1); opacity: 0` as a "transparent
+                        // white fill" workaround. pdf-lib still emitted a fill
+                        // operator, which some viewers render as a faint white
+                        // box. Leaving color/opacity unset skips the fill op
+                        // entirely and emits only the stroke.
 
-                    page.drawRectangle(rectOpts);
-                }
-            }
+                        if (hasBorder) {
+                            const border = parsePdfColor(ov.borderColor);
+                            rectOpts.borderColor = rgb(border.r, border.g, border.b);
+                            rectOpts.borderOpacity = borderOpacity / 100;
+                            rectOpts.borderWidth = borderWidth / state.scale;
+                        }
 
-            // ---- Draw text overlays ----
-            for (const [pageNumStr, overlays] of Object.entries(state.textOverlays)) {
-                const pageIdx = parseInt(pageNumStr, 10) - 1;
-                if (pageIdx < 0 || pageIdx >= pages.length) continue;
-                const page = pages[pageIdx];
-                const { width: pageWidth, height: pageHeight } = page.getSize();
-                const viewport = await getViewportForPage(pageNumStr);
-                const canvasWidth = viewport.width;
-                const canvasHeight = viewport.height;
+                        page.drawRectangle(rectOpts);
+                    } else {
+                        const text = ov.text;
+                        if (!text) continue;
 
-                for (const ov of overlays) {
-                    const text = ov.text;
-                    if (!text) continue;
+                        const pdfX = (ov.x / canvasWidth) * pageWidth;
+                        const scaledFontSize = (ov.fontSize / state.scale);
+                        const pdfY = pageHeight - ((ov.y / canvasHeight) * pageHeight) - scaledFontSize;
 
-                    const pdfX = (ov.x / canvasWidth) * pageWidth;
-                    const scaledFontSize = (ov.fontSize / state.scale);
-                    const pdfY = pageHeight - ((ov.y / canvasHeight) * pageHeight) - scaledFontSize;
+                        const font = fonts[ov.fontFamily] || fonts.Helvetica;
+                        const c = parsePdfColor(ov.color);
 
-                    const font = fonts[ov.fontFamily] || fonts.Helvetica;
-                    const c = parsePdfColor(ov.color);
-
-                    const lines = text.split('\n');
-                    lines.forEach((line, lineIdx) => {
-                        page.drawText(line, {
-                            x: pdfX,
-                            y: pdfY - (lineIdx * scaledFontSize * 1.2),
-                            size: scaledFontSize,
-                            font,
-                            color: rgb(c.r, c.g, c.b),
+                        const lines = text.split('\n');
+                        lines.forEach((line, lineIdx) => {
+                            page.drawText(line, {
+                                x: pdfX,
+                                y: pdfY - (lineIdx * scaledFontSize * 1.2),
+                                size: scaledFontSize,
+                                font,
+                                color: rgb(c.r, c.g, c.b),
+                            });
                         });
-                    });
+                    }
                 }
             }
 
