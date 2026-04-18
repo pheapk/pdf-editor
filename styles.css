@@ -357,9 +357,23 @@ main {
     box-sizing: border-box;
 }
 
-.rect-overlay:hover,
-.rect-overlay.selected {
+/* Hover: soft dashed primary. Must NOT look like .selected, otherwise
+   users can't tell a rect is "live for toolbar edits". See bug 3 below. */
+.rect-overlay:hover:not(.selected) {
     outline: 2px dashed var(--primary);
+    outline-offset: 2px;
+}
+
+/* BUGFIX (bug 3 — rect cross-contamination): .selected means the rect is
+   the active target of every rectangle toolbar input (fill, border,
+   opacity, width). Previously it shared the exact same outline as :hover,
+   so users had no way to know a rect was in "edit mode" and toolbar tweaks
+   silently rewrote whichever rect they had last clicked. Selected state
+   now renders with a loud solid orange outline to make the edit target
+   unambiguous. Paired with: Escape key, click-outside deselect, and
+   drag-commit deselect in app.js. */
+.rect-overlay.selected {
+    outline: 3px solid #f59e0b;
     outline-offset: 2px;
 }
 

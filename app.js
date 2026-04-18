@@ -29,6 +29,17 @@
         draggingText: null, // { el, idx, offsetX, offsetY, startX, startY, moved }
         // Page mapping: virtual page index → original pdf.js page number
         pageMap: [],
+        // BUGFIX (bug 2 — can't recolor existing text): tracks the index of
+        // the most recently focused text overlay on the current page. The
+        // toolbar inputs (font size / color / family) used to gate their
+        // handlers on `.text-overlay-content:focus`, but clicking any of
+        // those inputs steals focus from the contentEditable, so the guard
+        // always failed silently and the edit was dropped. Instead we
+        // remember which overlay was last focused and apply toolbar edits
+        // to it by index. Cleared in renderAllOverlays() (DOM rebuild) so
+        // stale indices can't point at the wrong overlay after page change,
+        // delete, undo, or clear.
+        lastFocusedTextIdx: null,
     };
 
     // ---- DOM refs ----
@@ -220,6 +231,10 @@
 
     function renderAllOverlays() {
         textLayer.innerHTML = '';
+        // Any prior focused text overlay index is now stale — the DOM has
+        // just been wiped and indices may shift (delete/undo/page change).
+        // See state.lastFocusedTextIdx docstring.
+        state.lastFocusedTextIdx = null;
         // Render rects first (behind text)
         getRectOverlays(state.currentPage).forEach((ov, idx) => {
             createRectElement(ov, idx);
@@ -302,8 +317,14 @@
             if (overlay) overlay.text = getEditableText(content);
         });
 
-        // When focused, update toolbar controls to match this overlay
+        // When focused, remember this as the active text overlay and sync
+        // the toolbar to its values. BUGFIX (bug 2): we now stash the index
+        // in state.lastFocusedTextIdx so the toolbar input handlers can
+        // still find it after focus moves to the color/size/font picker
+        // (which blurs the contentEditable). Previously they gated on
+        // `.text-overlay-content:focus` and silently no-op'd.
         content.addEventListener('focus', () => {
+            state.lastFocusedTextIdx = idx;
             fontSizeIn.value = ov.fontSize;
             fontColorIn.value = ov.color;
             fontFamilyIn.value = ov.fontFamily;
@@ -509,7 +530,18 @@
         };
 
         getRectOverlays(state.currentPage).push(overlay);
+        const newIdx = getRectOverlays(state.currentPage).length - 1;
         renderAllOverlays();
+
+        // BUGFIX (bug 4 — opacity slider "sticks"): auto-select the rect we
+        // just drew. Without this, renderAllOverlays() rebuilds all rects
+        // with no .selected class, so updateSelectedRect() silently no-ops
+        // on every subsequent slider move until the user remembers to click
+        // the rect. From the user's POV the slider "doesn't work" or the
+        // color is stuck at the initial opacity. Auto-selecting matches the
+        // intent: you just made this rect, you're about to tune it.
+        const newEl = textLayer.querySelector('.rect-overlay[data-rect-index="' + newIdx + '"]');
+        if (newEl) newEl.classList.add('selected');
     });
 
     // ---- Rectangle Element Creation ----
@@ -603,41 +635,57 @@
     rectBorderOpacIn.addEventListener('input', () => { updateOpacityLabels(); updateSelectedRect(); });
     rectBorderWidthIn.addEventListener('input', updateSelectedRect);
 
-    // Update focused overlay when toolbar values change
+    // Update the active text overlay when toolbar values change.
+    //
+    // BUGFIX (bug 2 — can't recolor existing text / resize / change font
+    // after placing): these handlers used to gate on
+    // `.text-overlay-content:focus`, but clicking the color/size/font
+    // picker moves focus OUT of the contentEditable, so by the time the
+    // `input` event fires the selector returns null and the edit is
+    // silently dropped. We now resolve the target via
+    // state.lastFocusedTextIdx (set in the content `focus` handler,
+    // cleared on every renderAllOverlays rebuild) and look the DOM
+    // element up by data-index — independent of current focus.
+    function getActiveTextEls() {
+        const idx = state.lastFocusedTextIdx;
+        if (idx == null) return null;
+        const overlay = getOverlays(state.currentPage)[idx];
+        if (!overlay) return null;
+        const wrapper = textLayer.querySelector('.text-overlay[data-index="' + idx + '"]');
+        if (!wrapper) return null;
+        const content = wrapper.querySelector('.text-overlay-content');
+        if (!content) return null;
+        return { idx, overlay, wrapper, content };
+    }
+
     fontSizeIn.addEventListener('input', () => {
-        const focused = textLayer.querySelector('.text-overlay-content:focus');
-        if (focused) {
-            const idx = parseInt(focused.dataset.index, 10);
-            const val = parseInt(fontSizeIn.value, 10) || 16;
-            getOverlays(state.currentPage)[idx].fontSize = val;
-            focused.closest('.text-overlay').style.fontSize = val + 'px';
-            focused.style.fontSize = val + 'px';
-        }
+        const t = getActiveTextEls();
+        if (!t) return;
+        const val = parseInt(fontSizeIn.value, 10) || 16;
+        t.overlay.fontSize = val;
+        t.wrapper.style.fontSize = val + 'px';
+        t.content.style.fontSize = val + 'px';
     });
 
     fontColorIn.addEventListener('input', () => {
-        const focused = textLayer.querySelector('.text-overlay-content:focus');
-        if (focused) {
-            const idx = parseInt(focused.dataset.index, 10);
-            // BUGFIX (text color): normalize the color before storing/applying
-            // it, and set it on BOTH the outer wrapper and the inner
-            // contentEditable div. Previously only the wrapper was styled
-            // and we relied on CSS inheritance — which failed in some
-            // browsers, making the chosen color render as the body default.
-            const color = normalizeHexColor(fontColorIn.value, '#000000');
-            getOverlays(state.currentPage)[idx].color = color;
-            focused.closest('.text-overlay').style.color = color;
-            focused.style.color = color;
-        }
+        const t = getActiveTextEls();
+        if (!t) return;
+        // Color set on BOTH the wrapper and the inner contentEditable —
+        // some browsers don't cleanly inherit `color` into editable
+        // regions, so relying on cascade alone renders as the body
+        // default. Normalize first so downstream (CSS + PDF save) sees
+        // the same canonical hex.
+        const color = normalizeHexColor(fontColorIn.value, '#000000');
+        t.overlay.color = color;
+        t.wrapper.style.color = color;
+        t.content.style.color = color;
     });
 
     fontFamilyIn.addEventListener('change', () => {
-        const focused = textLayer.querySelector('.text-overlay-content:focus');
-        if (focused) {
-            const idx = parseInt(focused.dataset.index, 10);
-            getOverlays(state.currentPage)[idx].fontFamily = fontFamilyIn.value;
-            focused.closest('.text-overlay').style.fontFamily = mapFont(fontFamilyIn.value);
-        }
+        const t = getActiveTextEls();
+        if (!t) return;
+        t.overlay.fontFamily = fontFamilyIn.value;
+        t.wrapper.style.fontFamily = mapFont(fontFamilyIn.value);
     });
 
     function mapFont(name) {
@@ -941,6 +989,11 @@
                 ov.x = parseFloat(dr.el.style.left);
                 ov.y = parseFloat(dr.el.style.top);
             }
+            // BUGFIX (bug 3): dragging a rect to MOVE it is not an intent
+            // to edit its props — the user's cursor is heading elsewhere.
+            // Leaving .selected on after a drag was the most common way
+            // users ended up "editing" an old rect without realizing it.
+            if (state.draggingRect) dr.el.classList.remove('selected');
         }
 
         state.draggingRect = null;
@@ -976,5 +1029,27 @@
             e.preventDefault();
             if (state.pdfDoc) saveBtn.click();
         }
+        // BUGFIX (bug 3): Escape deselects any active rect. Gives the user
+        // an explicit, always-available way to leave edit mode before
+        // changing toolbar values that should NOT apply to the last rect
+        // they clicked.
+        if (e.key === 'Escape') {
+            clearRectSelection();
+        }
+    });
+
+    // BUGFIX (bug 3): mousedown outside both the canvas and the rect
+    // toolbar clears .selected. Example: user clicks rect A (now
+    // .selected), moves to the header/body/page-nav to do something else,
+    // then comes back and changes the color picker expecting to set up
+    // the next draw — without this, rect A would be silently rewritten.
+    // We deliberately do NOT clear on clicks inside #textLayer (handled
+    // there: rect mousedowns re-select, empty-space mousedowns draw and
+    // already clear) or inside #rectControls (those clicks ARE the
+    // intentional edit of the currently selected rect).
+    document.addEventListener('mousedown', (e) => {
+        if (textLayer.contains(e.target)) return;
+        if (rectControls.contains(e.target)) return;
+        clearRectSelection();
     });
 })();
