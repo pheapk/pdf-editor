@@ -20,6 +20,7 @@
             <div class="toolbar-group tool-toggle">
                 <button id="toolText" class="tool-btn active" title="Text tool">Text</button>
                 <button id="toolRect" class="tool-btn" title="Rectangle tool">Rect</button>
+                <button id="toolMark" class="tool-btn" title="Mark tool (check / cross)">Mark</button>
             </div>
             <div id="textControls" class="toolbar-group">
                 <label for="fontSize">Size:</label>
@@ -32,6 +33,16 @@
                     <option value="TimesRoman">Times Roman</option>
                     <option value="Courier">Courier</option>
                 </select>
+            </div>
+            <div id="markControls" class="toolbar-group hidden">
+                <div class="toolbar-group tool-toggle">
+                    <button id="markKindCheck" class="tool-btn active" title="Checkmark">&#10003;</button>
+                    <button id="markKindCross" class="tool-btn" title="Crossmark">&#10007;</button>
+                </div>
+                <label for="markColor">Color:</label>
+                <input type="color" id="markColor" value="#16a34a">
+                <label for="markStrokeWidth">Width:</label>
+                <input type="number" id="markStrokeWidth" value="3" min="1" max="20" step="0.5">
             </div>
             <div id="rectControls" class="toolbar-group hidden">
                 <label for="rectFill">Fill:</label>

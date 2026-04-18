@@ -392,6 +392,66 @@ main {
     outline-offset: 2px;
 }
 
+/* Mark Overlay (checkmark / crossmark) */
+.mark-overlay {
+    position: absolute;
+    cursor: move;
+    box-sizing: border-box;
+}
+
+.mark-overlay svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    pointer-events: none;
+}
+
+/* Per user request: the bounding box only appears on .selected — no hover
+   outline. Interactivity is still signalled by the `cursor: move` on the
+   wrapper plus the delete × handle that appears on hover. */
+.mark-overlay.selected {
+    outline: 3px solid #f59e0b;
+    outline-offset: 2px;
+}
+
+.mark-overlay .text-overlay-handle {
+    display: none;
+}
+
+.mark-overlay:hover .text-overlay-handle {
+    display: block;
+}
+
+/* Selected mark is kept during drag (explicit feature intent: select → edit),
+   so the .selected orange outline already shows while dragging. We only need
+   opacity + cursor here — no duplicate outline. */
+.mark-overlay.dragging {
+    cursor: grabbing;
+    opacity: 0.8;
+}
+
+/* Bottom-right resize handle. Visible only when the mark is selected so an
+   idle mark doesn't look cluttered. Square-preserving resize (see app.js
+   resizingMark); cursor is the standard diagonal-resize arrow. */
+.mark-resize-handle {
+    position: absolute;
+    right: -7px;
+    bottom: -7px;
+    width: 14px;
+    height: 14px;
+    background: #f59e0b;
+    border: 2px solid white;
+    border-radius: 50%;
+    cursor: nwse-resize;
+    display: none;
+    z-index: 10;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.mark-overlay.selected .mark-resize-handle {
+    display: block;
+}
+
 /* Drawing cursor */
 #textLayer.drawing-rect {
     cursor: crosshair;

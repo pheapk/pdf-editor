@@ -12,11 +12,19 @@
         currentPage: 1,
         totalPages: 0,
         scale: 1.5,
-        activeTool: 'text',   // 'text' or 'rect'
+        activeTool: 'text',   // 'text', 'rect', or 'mark'
         // textOverlays[pageNum] = [ { x, y, text, fontSize, color, fontFamily, z } ]
         textOverlays: {},
         // rectOverlays[pageNum] = [ { x, y, w, h, fillColor, fillOpacity, borderColor, borderOpacity, borderWidth, z } ]
         rectOverlays: {},
+        // markOverlays[pageNum] = [ { x, y, w, h, kind: 'check'|'cross', color, strokeWidth, z } ]
+        // Marks are click-to-place with a fixed square size (MARK_DEFAULT_SIZE)
+        // centered on the click. Click-drag-to-size was removed because uneven
+        // aspect ratios looked wrong for checkbox marking, and a Firefox-only
+        // bug caused drag-created marks to snap to the left edge on release.
+        // Clicking an existing mark selects it; toolbar color/width then apply
+        // to the selection, and a corner handle allows square-preserving resize.
+        markOverlays: {},
         // BUGFIX (rect doesn't cover text): every overlay gets a monotonically
         // increasing `z` at creation. renderAllOverlays() and the save handler
         // both sort by z so later-created overlays paint on top of earlier
@@ -36,6 +44,12 @@
         // previously — only rectangles had a drag handler. Now both kinds of
         // overlay reuse the same document-level mousemove/mouseup pipeline.
         draggingText: null, // { el, idx, offsetX, offsetY, startX, startY, moved }
+        // Drag state for moving existing marks. Same shape as the two above.
+        draggingMark: null,
+        // Resize state for marks. Bottom-right handle drags outward from the
+        // fixed top-left anchor; size = max(dx, dy) + origSize so the mark
+        // stays square (user requirement: no uneven marks).
+        resizingMark: null,
         // Page mapping: virtual page index → original pdf.js page number
         pageMap: [],
         // BUGFIX (bug 2 — can't recolor existing text): tracks the index of
@@ -90,6 +104,14 @@
     const deleteFromIn     = $('#deleteFrom');
     const deleteToIn       = $('#deleteTo');
 
+    // Mark tool controls
+    const toolMarkBtn      = $('#toolMark');
+    const markControls     = $('#markControls');
+    const markKindCheckBtn = $('#markKindCheck');
+    const markKindCrossBtn = $('#markKindCross');
+    const markColorIn      = $('#markColor');
+    const markStrokeWidthIn = $('#markStrokeWidth');
+
     // ---- Helpers ----
     function showLoading() { loadingOverlay.classList.remove('hidden'); }
     function hideLoading() { loadingOverlay.classList.add('hidden'); }
@@ -102,6 +124,15 @@
     function getRectOverlays(page) {
         if (!state.rectOverlays[page]) state.rectOverlays[page] = [];
         return state.rectOverlays[page];
+    }
+
+    function getMarkOverlays(page) {
+        if (!state.markOverlays[page]) state.markOverlays[page] = [];
+        return state.markOverlays[page];
+    }
+
+    function getCurrentMarkKind() {
+        return markKindCrossBtn && markKindCrossBtn.classList.contains('active') ? 'cross' : 'check';
     }
 
     function normalizeHexColor(hex, fallback = '#000000') {
@@ -207,6 +238,7 @@
             state.currentPage = 1;
             state.textOverlays = {};
             state.rectOverlays = {};
+            state.markOverlays = {};
             state.pageMap = Array.from({ length: state.totalPages }, (_, i) => i + 1);
 
             uploadArea.classList.add('hidden');
@@ -251,13 +283,16 @@
         // values fall back to insertion order without re-shuffling.
         const rects = getRectOverlays(state.currentPage);
         const texts = getOverlays(state.currentPage);
+        const marks = getMarkOverlays(state.currentPage);
         const items = [
             ...rects.map((ov, idx) => ({ kind: 'rect', ov, idx })),
             ...texts.map((ov, idx) => ({ kind: 'text', ov, idx })),
+            ...marks.map((ov, idx) => ({ kind: 'mark', ov, idx })),
         ].sort((a, b) => (a.ov.z || 0) - (b.ov.z || 0));
 
         for (const item of items) {
             if (item.kind === 'rect') createRectElement(item.ov, item.idx);
+            else if (item.kind === 'mark') createMarkElement(item.ov, item.idx);
             else createOverlayElement(item.ov, item.idx);
         }
     }
@@ -403,22 +438,118 @@
             .forEach((el) => el.classList.remove('selected'));
     }
 
+    // Default square side (canvas pixels) for click-to-place marks. Chosen
+    // to roughly match the size of a typical PDF checkbox; the user can
+    // resize after placement via the corner handle.
+    const MARK_DEFAULT_SIZE = 40;
+
+    function clearMarkSelection() {
+        textLayer.querySelectorAll('.mark-overlay.selected')
+            .forEach((el) => el.classList.remove('selected'));
+    }
+
+    // Sync the mark toolbar (color, stroke width) to the given overlay when
+    // it becomes selected. Kind buttons are intentionally NOT synced — they
+    // represent "kind for the NEXT mark you place", so clicking Check/Cross
+    // while a mark is selected affects future marks only, not the selection.
+    // This avoids the "I clicked cross and my selected check turned into a
+    // cross" confusion.
+    function syncToolbarToMark(ov) {
+        markColorIn.value = ov.color;
+        markStrokeWidthIn.value = ov.strokeWidth;
+    }
+
+    // Mirror the rect toolbar→selection pipeline for marks: the `.selected`
+    // mark is the implicit target of color/width input events, and we
+    // re-style its SVG path in place rather than a full re-render (faster
+    // and keeps the selection class where it is).
+    function updateSelectedMark() {
+        const sel = textLayer.querySelector('.mark-overlay.selected');
+        if (!sel) return;
+        const idx = parseInt(sel.dataset.markIndex, 10);
+        const ov = getMarkOverlays(state.currentPage)[idx];
+        if (!ov) return;
+        ov.color = normalizeHexColor(markColorIn.value, '#16a34a');
+        ov.strokeWidth = normalizeBorderWidth(markStrokeWidthIn.value, 3);
+        const path = sel.querySelector('svg path');
+        if (path) {
+            path.setAttribute('stroke', ov.color);
+            path.setAttribute('stroke-width', String(ov.strokeWidth));
+        }
+    }
+
     function setTool(tool) {
         state.activeTool = tool;
         toolTextBtn.classList.toggle('active', tool === 'text');
         toolRectBtn.classList.toggle('active', tool === 'rect');
+        toolMarkBtn.classList.toggle('active', tool === 'mark');
         textControls.classList.toggle('hidden', tool !== 'text');
         rectControls.classList.toggle('hidden', tool !== 'rect');
-        textLayer.classList.toggle('drawing-rect', tool === 'rect');
+        markControls.classList.toggle('hidden', tool !== 'mark');
+        // Both rect (click-drag) and mark (click-to-place) read as
+        // "create-on-canvas" tools, so both get the crosshair cursor.
+        // `.drawing-rect` is a mild misnomer now; kept to avoid a CSS
+        // rename churn in this diff.
+        textLayer.classList.toggle('drawing-rect', tool === 'rect' || tool === 'mark');
         // Switching tools should never leave a rect "selected" for the next
         // tool's toolbar inputs to accidentally mutate. See clearRectSelection.
         clearRectSelection();
+        // Same reasoning for marks — a stale mark selection would silently
+        // receive color/width edits meant for the next mark.
+        clearMarkSelection();
     }
 
-    // Click on textLayer to create new text box (only in text mode)
+    toolMarkBtn.addEventListener('click', () => setTool('mark'));
+    markKindCheckBtn.addEventListener('click', () => {
+        markKindCheckBtn.classList.add('active');
+        markKindCrossBtn.classList.remove('active');
+    });
+    markKindCrossBtn.addEventListener('click', () => {
+        markKindCrossBtn.classList.add('active');
+        markKindCheckBtn.classList.remove('active');
+    });
+
+    // Click on textLayer: in text mode creates a text box; in mark mode
+    // places a fixed-size square mark centered on the click.
     textLayer.addEventListener('click', (e) => {
+        // Mark mode: click-to-place. Switched from the old click-drag UX
+        // because (a) drag produced uneven aspect ratios users disliked for
+        // checkbox marking, and (b) a Firefox-only bug caused drag-created
+        // marks to snap to the left edge on mouseup. A fixed square removes
+        // both issues; the user can still resize via the corner handle after
+        // selection.
+        if (state.activeTool === 'mark') {
+            if (e.target.closest('.text-overlay') || e.target.closest('.rect-overlay') || e.target.closest('.mark-overlay')) return;
+            clearRectSelection();
+            clearMarkSelection();
+            const rect = textLayer.getBoundingClientRect();
+            const cx = e.clientX - rect.left;
+            const cy = e.clientY - rect.top;
+            const SIZE = MARK_DEFAULT_SIZE;
+            // Center the mark on the click, then clamp so the full box stays
+            // inside the canvas.
+            const overlay = {
+                x: Math.max(0, Math.min(rect.width - SIZE, cx - SIZE / 2)),
+                y: Math.max(0, Math.min(rect.height - SIZE, cy - SIZE / 2)),
+                w: SIZE,
+                h: SIZE,
+                kind: getCurrentMarkKind(),
+                color: normalizeHexColor(markColorIn.value, '#16a34a'),
+                strokeWidth: normalizeBorderWidth(markStrokeWidthIn.value, 3),
+                z: state.nextZ++,
+            };
+            getMarkOverlays(state.currentPage).push(overlay);
+            const newIdx = getMarkOverlays(state.currentPage).length - 1;
+            renderAllOverlays();
+            // Auto-select so the user can immediately tweak color / width /
+            // size without an extra click. Matches the rect auto-select
+            // behavior introduced for bug 4.
+            const newEl = textLayer.querySelector('.mark-overlay[data-mark-index="' + newIdx + '"]');
+            if (newEl) newEl.classList.add('selected');
+            return;
+        }
         if (state.activeTool !== 'text') return;
-        if (e.target.closest('.text-overlay') || e.target.closest('.rect-overlay')) return;
+        if (e.target.closest('.text-overlay') || e.target.closest('.rect-overlay') || e.target.closest('.mark-overlay')) return;
 
         // Clicking empty canvas in text mode is an unambiguous "I'm done with
         // that rect I had selected" signal — drop the selection so later
@@ -452,9 +583,11 @@
     });
 
     // ---- Rectangle Drawing (mousedown → mousemove → mouseup) ----
+    // Only rectangles use the click-drag-to-size pipeline now. Marks moved
+    // to click-to-place — see the textLayer click handler above.
     textLayer.addEventListener('mousedown', (e) => {
         if (state.activeTool !== 'rect') return;
-        if (e.target.closest('.text-overlay') || e.target.closest('.rect-overlay')) return;
+        if (e.target.closest('.text-overlay') || e.target.closest('.rect-overlay') || e.target.closest('.mark-overlay')) return;
 
         // BUGFIX (rect cross-contamination): MUST clear the previous selection
         // BEFORE we start a new draw. Otherwise the prior `.selected` rect
@@ -628,6 +761,108 @@
         return div;
     }
 
+    // ---- Mark Element Creation ----
+    // Paths are expressed in a 0..100 viewBox so the same two path strings
+    // work at any size. `vector-effect: non-scaling-stroke` keeps the line
+    // weight constant when the viewBox is stretched to a non-square box.
+    const MARK_PATHS = {
+        check: 'M 20 55 L 40 75 L 85 25',
+        cross: 'M 20 20 L 80 80 M 80 20 L 20 80',
+    };
+
+    function createMarkElement(ov, idx) {
+        const div = document.createElement('div');
+        div.className = 'mark-overlay';
+        div.style.left = ov.x + 'px';
+        div.style.top = ov.y + 'px';
+        div.style.width = ov.w + 'px';
+        div.style.height = ov.h + 'px';
+        div.dataset.markIndex = idx;
+
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNS, 'svg');
+        svg.setAttribute('viewBox', '0 0 100 100');
+        svg.setAttribute('preserveAspectRatio', 'none');
+
+        const path = document.createElementNS(svgNS, 'path');
+        path.setAttribute('d', MARK_PATHS[ov.kind] || MARK_PATHS.check);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', ov.color);
+        path.setAttribute('stroke-width', String(ov.strokeWidth));
+        path.setAttribute('stroke-linecap', 'round');
+        path.setAttribute('stroke-linejoin', 'round');
+        path.setAttribute('vector-effect', 'non-scaling-stroke');
+
+        svg.appendChild(path);
+        div.appendChild(svg);
+
+        const handle = document.createElement('button');
+        handle.className = 'text-overlay-handle';
+        handle.textContent = '\u00d7';
+        handle.title = 'Delete';
+        handle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            getMarkOverlays(state.currentPage).splice(idx, 1);
+            renderAllOverlays();
+        });
+        div.appendChild(handle);
+
+        // Resize handle — visible only while the mark is selected (CSS).
+        // Dragging it resizes the mark while preserving the square aspect
+        // ratio from the anchored top-left corner.
+        const resizeHandle = document.createElement('div');
+        resizeHandle.className = 'mark-resize-handle';
+        resizeHandle.title = 'Resize';
+        div.appendChild(resizeHandle);
+
+        resizeHandle.addEventListener('mousedown', (e) => {
+            // Stop the outer mark mousedown from kicking off a move drag.
+            e.stopPropagation();
+            e.preventDefault();
+            state.resizingMark = {
+                el: div,
+                idx,
+                startX: e.clientX,
+                startY: e.clientY,
+                origW: ov.w,
+                origH: ov.h,
+                origX: ov.x,
+                origY: ov.y,
+            };
+        });
+
+        div.addEventListener('mousedown', (e) => {
+            if (e.target === handle || e.target === resizeHandle) return;
+            e.stopPropagation();
+            e.preventDefault();
+
+            // Select this mark before any move-drag. Selection drives (1) the
+            // orange outline the user requested, (2) toolbar color/width sync,
+            // and (3) visibility of the resize handle. Done unconditionally —
+            // if the user clicks without dragging, the selection remains so
+            // they can tweak color/width. (Rect deselects after drag by
+            // design, but marks keep selection because the explicit intent of
+            // the feature is "select, then edit".)
+            setTool('mark');
+            div.classList.add('selected');
+            syncToolbarToMark(ov);
+
+            state.draggingMark = {
+                el: div,
+                idx,
+                offsetX: e.clientX - div.getBoundingClientRect().left,
+                offsetY: e.clientY - div.getBoundingClientRect().top,
+                startX: e.clientX,
+                startY: e.clientY,
+                moved: false,
+            };
+            div.classList.add('dragging');
+        });
+
+        textLayer.appendChild(div);
+        return div;
+    }
+
     // Update selected rect when toolbar values change
     function updateSelectedRect() {
         const sel = textLayer.querySelector('.rect-overlay.selected');
@@ -653,6 +888,12 @@
     rectBorderIn.addEventListener('input', updateSelectedRect);
     rectBorderOpacIn.addEventListener('input', () => { updateOpacityLabels(); updateSelectedRect(); });
     rectBorderWidthIn.addEventListener('input', updateSelectedRect);
+
+    // Mark toolbar edits apply to whichever mark is currently .selected.
+    // Kind buttons (Check / Cross) are not wired here — they control the
+    // kind of the NEXT mark to place, not the current selection.
+    markColorIn.addEventListener('input', updateSelectedMark);
+    markStrokeWidthIn.addEventListener('input', updateSelectedMark);
 
     // Update the active text overlay when toolbar values change.
     //
@@ -733,6 +974,9 @@
         if (state.activeTool === 'rect') {
             const rects = getRectOverlays(state.currentPage);
             if (rects.length) { rects.pop(); renderAllOverlays(); }
+        } else if (state.activeTool === 'mark') {
+            const marks = getMarkOverlays(state.currentPage);
+            if (marks.length) { marks.pop(); renderAllOverlays(); }
         } else {
             const overlays = getOverlays(state.currentPage);
             if (overlays.length) { overlays.pop(); renderAllOverlays(); }
@@ -742,6 +986,7 @@
     clearPageBtn.addEventListener('click', () => {
         state.textOverlays[state.currentPage] = [];
         state.rectOverlays[state.currentPage] = [];
+        state.markOverlays[state.currentPage] = [];
         renderAllOverlays();
     });
 
@@ -769,6 +1014,7 @@
         // Rebuild overlays with shifted keys
         const newText = {};
         const newRect = {};
+        const newMark = {};
         for (const [key, val] of Object.entries(state.textOverlays)) {
             const p = parseInt(key, 10);
             if (p >= from && p <= to) continue; // deleted
@@ -781,8 +1027,15 @@
             const newP = p > to ? p - deleteCount : p;
             newRect[newP] = val;
         }
+        for (const [key, val] of Object.entries(state.markOverlays)) {
+            const p = parseInt(key, 10);
+            if (p >= from && p <= to) continue;
+            const newP = p > to ? p - deleteCount : p;
+            newMark[newP] = val;
+        }
         state.textOverlays = newText;
         state.rectOverlays = newRect;
+        state.markOverlays = newMark;
 
         state.totalPages -= deleteCount;
         if (state.currentPage > state.totalPages) {
@@ -850,7 +1103,18 @@
             const allPageKeys = new Set([
                 ...Object.keys(state.rectOverlays),
                 ...Object.keys(state.textOverlays),
+                ...Object.keys(state.markOverlays),
             ]);
+
+            // Mark path segments in normalized (0..1) coords within the mark's
+            // bounding box. A `null` entry means "pen up" — start a new segment
+            // at the next point (used by the cross, which is two disjoint
+            // lines). Kept here so the save code and createMarkElement stay
+            // in sync on the geometry.
+            const MARK_SAVE_PATHS = {
+                check: [[0.20, 0.55], [0.40, 0.75], [0.85, 0.25]],
+                cross: [[0.20, 0.20], [0.80, 0.80], null, [0.80, 0.20], [0.20, 0.80]],
+            };
 
             for (const pageNumStr of allPageKeys) {
                 const pageIdx = parseInt(pageNumStr, 10) - 1;
@@ -863,9 +1127,11 @@
 
                 const rects = state.rectOverlays[pageNumStr] || [];
                 const texts = state.textOverlays[pageNumStr] || [];
+                const marks = state.markOverlays[pageNumStr] || [];
                 const items = [
                     ...rects.map(ov => ({ kind: 'rect', ov })),
                     ...texts.map(ov => ({ kind: 'text', ov })),
+                    ...marks.map(ov => ({ kind: 'mark', ov })),
                 ].sort((a, b) => (a.ov.z || 0) - (b.ov.z || 0));
 
                 for (const { kind, ov } of items) {
@@ -911,6 +1177,39 @@
                         }
 
                         page.drawRectangle(rectOpts);
+                    } else if (kind === 'mark') {
+                        const pdfX = (ov.x / canvasWidth) * pageWidth;
+                        const pdfW = (ov.w / canvasWidth) * pageWidth;
+                        const pdfH = (ov.h / canvasHeight) * pageHeight;
+                        // Top-left of mark in canvas space → bottom-left in PDF space.
+                        // mapPoint converts normalized (u,v) within the box
+                        // (v=0 at top, v=1 at bottom in canvas convention) to
+                        // PDF coords (bottom-left origin).
+                        const pdfTopY = pageHeight - (ov.y / canvasHeight) * pageHeight;
+                        const mapPoint = (u, v) => ({
+                            x: pdfX + u * pdfW,
+                            y: pdfTopY - v * pdfH,
+                        });
+
+                        const c = parsePdfColor(ov.color);
+                        const thickness = normalizeBorderWidth(ov.strokeWidth, 3) / state.scale;
+                        const path = MARK_SAVE_PATHS[ov.kind] || MARK_SAVE_PATHS.check;
+
+                        let prev = null;
+                        for (const pt of path) {
+                            if (pt === null) { prev = null; continue; }
+                            const here = mapPoint(pt[0], pt[1]);
+                            if (prev) {
+                                page.drawLine({
+                                    start: prev,
+                                    end: here,
+                                    thickness,
+                                    color: rgb(c.r, c.g, c.b),
+                                    opacity: 1,
+                                });
+                            }
+                            prev = here;
+                        }
                     } else {
                         const text = ov.text;
                         if (!text) continue;
@@ -959,7 +1258,28 @@
     // `state.draggingText` use the same shape; whichever one is non-null
     // identifies which kind of overlay is being dragged.
     document.addEventListener('mousemove', (e) => {
-        const dr = state.draggingRect || state.draggingText;
+        // Mark resize: top-left anchored, square-preserving. Checked first so
+        // a simultaneous drag state (shouldn't exist, but defensive) can't
+        // fight the resize.
+        if (state.resizingMark) {
+            const rm = state.resizingMark;
+            const dx = e.clientX - rm.startX;
+            const dy = e.clientY - rm.startY;
+            // Larger of the two axes drives the square size so the user
+            // feels in control whichever way they drag the handle.
+            const delta = Math.max(dx, dy);
+            const layerRect = textLayer.getBoundingClientRect();
+            // Don't let the mark grow past the canvas edge from its fixed
+            // top-left; don't let it shrink below 8px (stroke-linejoin gets
+            // weird past that).
+            const maxSize = Math.min(layerRect.width - rm.origX, layerRect.height - rm.origY);
+            const size = Math.max(8, Math.min(maxSize, rm.origW + delta));
+            rm.el.style.width = size + 'px';
+            rm.el.style.height = size + 'px';
+            return;
+        }
+
+        const dr = state.draggingRect || state.draggingText || state.draggingMark;
         if (!dr) return;
 
         const dx = e.clientX - dr.startX;
@@ -974,12 +1294,15 @@
             let newX = e.clientX - layerRect.left - dr.offsetX;
             let newY = e.clientY - layerRect.top - dr.offsetY;
 
-            // Clamp within textLayer bounds. For rects we know the size from
-            // state (ov.w/ov.h). For text overlays the size is driven by
-            // content and can change as the user edits, so measure the
-            // element's current rendered size instead.
+            // Clamp within textLayer bounds. Rect and mark know their size
+            // from state (ov.w/ov.h). Text overlays size to content so we
+            // measure the element's rendered size instead.
             if (state.draggingRect) {
                 const ov = getRectOverlays(state.currentPage)[dr.idx];
+                newX = Math.max(0, Math.min(newX, layerRect.width - ov.w));
+                newY = Math.max(0, Math.min(newY, layerRect.height - ov.h));
+            } else if (state.draggingMark) {
+                const ov = getMarkOverlays(state.currentPage)[dr.idx];
                 newX = Math.max(0, Math.min(newX, layerRect.width - ov.w));
                 newY = Math.max(0, Math.min(newY, layerRect.height - ov.h));
             } else {
@@ -993,7 +1316,20 @@
     });
 
     document.addEventListener('mouseup', () => {
-        const dr = state.draggingRect || state.draggingText;
+        // Commit mark resize to state. Selection is kept so the user can
+        // continue tweaking color / width / position.
+        if (state.resizingMark) {
+            const rm = state.resizingMark;
+            const ov = getMarkOverlays(state.currentPage)[rm.idx];
+            if (ov) {
+                ov.w = parseFloat(rm.el.style.width);
+                ov.h = parseFloat(rm.el.style.height);
+            }
+            state.resizingMark = null;
+            return;
+        }
+
+        const dr = state.draggingRect || state.draggingText || state.draggingMark;
         if (!dr) return;
 
         dr.el.classList.remove('dragging');
@@ -1001,9 +1337,10 @@
         if (dr.moved) {
             // Commit new position back to state. Use the correct overlay
             // array depending on which drag was in flight.
-            const ov = state.draggingRect
-                ? getRectOverlays(state.currentPage)[dr.idx]
-                : getOverlays(state.currentPage)[dr.idx];
+            let ov;
+            if (state.draggingRect) ov = getRectOverlays(state.currentPage)[dr.idx];
+            else if (state.draggingMark) ov = getMarkOverlays(state.currentPage)[dr.idx];
+            else ov = getOverlays(state.currentPage)[dr.idx];
             if (ov) {
                 ov.x = parseFloat(dr.el.style.left);
                 ov.y = parseFloat(dr.el.style.top);
@@ -1017,6 +1354,7 @@
 
         state.draggingRect = null;
         state.draggingText = null;
+        state.draggingMark = null;
     });
 
     // ---- Keyboard shortcuts ----
@@ -1054,6 +1392,7 @@
         // they clicked.
         if (e.key === 'Escape') {
             clearRectSelection();
+            clearMarkSelection();
         }
     });
 
@@ -1069,6 +1408,8 @@
     document.addEventListener('mousedown', (e) => {
         if (textLayer.contains(e.target)) return;
         if (rectControls.contains(e.target)) return;
+        if (markControls.contains(e.target)) return;
         clearRectSelection();
+        clearMarkSelection();
     });
 })();
