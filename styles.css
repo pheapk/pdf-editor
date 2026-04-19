@@ -350,6 +350,20 @@ main {
     display: block;
 }
 
+/* BUGFIX (× washes out on hover): the generic `button:hover` rule above
+   has higher specificity (0,1,1) than `.text-overlay-handle` (0,1,0),
+   so on hover the red --danger background was being replaced by the
+   near-white --bg (#f5f5f5). White × text on near-white background =
+   visually invisible, though the button stayed clickable — users kept
+   reporting "the delete X disappeared". This rule (0,2,0) beats the
+   generic and keeps the handle legibly red, with a slightly darker red
+   on hover as normal hover affordance. Applies to both text, rect and
+   mark delete handles (all share this class). */
+.text-overlay-handle:hover {
+    background: #b91c1c;
+    color: white;
+}
+
 /* Rectangle Overlay */
 .rect-overlay {
     position: absolute;
@@ -391,6 +405,49 @@ main {
     outline: 2px dashed var(--primary);
     outline-offset: 2px;
 }
+
+/* Rectangle resize handles. Shown only when .rect-overlay is .selected
+   (the user has clicked into "edit this rect" mode). 8 handles total:
+   4 edge midpoints (single-axis resize) + 4 corners (free-form w/h,
+   not square-locked like the mark's corner handle). Styling matches
+   the mark-resize-handle visual (orange fill, white ring) so the
+   "edit-in-place" idiom reads the same across overlay types. */
+.rect-resize-handle {
+    position: absolute;
+    background: #f59e0b;
+    border: 2px solid white;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    display: none;
+    z-index: 10;
+}
+
+.rect-overlay.selected .rect-resize-handle {
+    display: block;
+}
+
+/* Corners: round, slightly larger so they're easy to grab. */
+.rect-resize-handle.corner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+}
+
+/* Edges: rounded squares centered on each wall. */
+.rect-resize-handle.edge {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+}
+
+.rect-resize-handle.nw { top: -7px;    left: -7px;   cursor: nwse-resize; }
+.rect-resize-handle.ne { top: -7px;    right: -7px;  cursor: nesw-resize; }
+.rect-resize-handle.sw { bottom: -7px; left: -7px;   cursor: nesw-resize; }
+.rect-resize-handle.se { bottom: -7px; right: -7px;  cursor: nwse-resize; }
+
+.rect-resize-handle.n  { top: -6px;    left: 50%;    transform: translateX(-50%); cursor: ns-resize; }
+.rect-resize-handle.s  { bottom: -6px; left: 50%;    transform: translateX(-50%); cursor: ns-resize; }
+.rect-resize-handle.w  { left: -6px;   top: 50%;     transform: translateY(-50%); cursor: ew-resize; }
+.rect-resize-handle.e  { right: -6px;  top: 50%;     transform: translateY(-50%); cursor: ew-resize; }
 
 /* Mark Overlay (checkmark / crossmark) */
 .mark-overlay {

@@ -50,6 +50,14 @@
         // fixed top-left anchor; size = max(dx, dy) + origSize so the mark
         // stays square (user requirement: no uneven marks).
         resizingMark: null,
+        // Resize state for rectangles. Unlike marks, rects get 8 handles
+        // (4 edges + 4 corners) and no square constraint — the user wants
+        // free-form w/h. `handle` is a compass string ('n', 's', 'e', 'w',
+        // 'nw', 'ne', 'sw', 'se'); its letters drive the math in the
+        // mousemove branch (a 'w' moves the west edge, so x AND w change;
+        // an 'e' keeps the west edge fixed, so only w changes; same for
+        // n/s on the vertical axis).
+        resizingRect: null,
         // Page mapping: virtual page index → original pdf.js page number
         pageMap: [],
         // BUGFIX (bug 2 — can't recolor existing text): tracks the index of
@@ -727,9 +735,48 @@
         });
         div.appendChild(handle);
 
+        // 8 resize handles: 4 corners + 4 edges. Shown only when the rect
+        // is .selected (CSS). Each stops propagation in mousedown so the
+        // outer rect drag doesn't also fire. The compass string on each
+        // handle drives the math in the document-level mousemove branch.
+        const RECT_HANDLES = [
+            { pos: 'nw', kind: 'corner' },
+            { pos: 'n',  kind: 'edge' },
+            { pos: 'ne', kind: 'corner' },
+            { pos: 'e',  kind: 'edge' },
+            { pos: 'se', kind: 'corner' },
+            { pos: 's',  kind: 'edge' },
+            { pos: 'sw', kind: 'corner' },
+            { pos: 'w',  kind: 'edge' },
+        ];
+        for (const h of RECT_HANDLES) {
+            const rh = document.createElement('div');
+            rh.className = 'rect-resize-handle ' + h.pos + ' ' + h.kind;
+            rh.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                state.resizingRect = {
+                    el: div,
+                    idx,
+                    handle: h.pos,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    origX: ov.x,
+                    origY: ov.y,
+                    origW: ov.w,
+                    origH: ov.h,
+                };
+            });
+            div.appendChild(rh);
+        }
+
         // Mousedown: start drag or select
         div.addEventListener('mousedown', (e) => {
             if (e.target === handle) return; // let delete button work
+            // Resize handles have their own mousedown that stopPropagates,
+            // but keep a defensive guard in case the event somehow reaches
+            // here (e.g. target being the handle's child in the future).
+            if (e.target.classList && e.target.classList.contains('rect-resize-handle')) return;
             e.stopPropagation();
             e.preventDefault();
 
@@ -1258,6 +1305,46 @@
     // `state.draggingText` use the same shape; whichever one is non-null
     // identifies which kind of overlay is being dragged.
     document.addEventListener('mousemove', (e) => {
+        // Rect resize: 8-handle free-form. Any letter 'w' means the west
+        // edge moves (right edge is the anchor, x and w both change); 'e'
+        // keeps the west edge fixed and only w changes. Same logic on the
+        // n/s axis for y and h. Min size 8px; canvas-edge clamped so the
+        // rect can't escape the viewport. Handled before resizingMark for
+        // consistency with the checked-first pattern.
+        if (state.resizingRect) {
+            const rr = state.resizingRect;
+            const dx = e.clientX - rr.startX;
+            const dy = e.clientY - rr.startY;
+            const layerRect = textLayer.getBoundingClientRect();
+            const MIN = 8;
+
+            let newX = rr.origX;
+            let newY = rr.origY;
+            let newW = rr.origW;
+            let newH = rr.origH;
+
+            if (rr.handle.indexOf('w') !== -1) {
+                const rightEdge = rr.origX + rr.origW;
+                newX = Math.max(0, Math.min(rr.origX + dx, rightEdge - MIN));
+                newW = rightEdge - newX;
+            } else if (rr.handle.indexOf('e') !== -1) {
+                newW = Math.max(MIN, Math.min(rr.origW + dx, layerRect.width - rr.origX));
+            }
+            if (rr.handle.indexOf('n') !== -1) {
+                const bottomEdge = rr.origY + rr.origH;
+                newY = Math.max(0, Math.min(rr.origY + dy, bottomEdge - MIN));
+                newH = bottomEdge - newY;
+            } else if (rr.handle.indexOf('s') !== -1) {
+                newH = Math.max(MIN, Math.min(rr.origH + dy, layerRect.height - rr.origY));
+            }
+
+            rr.el.style.left = newX + 'px';
+            rr.el.style.top = newY + 'px';
+            rr.el.style.width = newW + 'px';
+            rr.el.style.height = newH + 'px';
+            return;
+        }
+
         // Mark resize: top-left anchored, square-preserving. Checked first so
         // a simultaneous drag state (shouldn't exist, but defensive) can't
         // fight the resize.
@@ -1316,6 +1403,23 @@
     });
 
     document.addEventListener('mouseup', () => {
+        // Commit rect resize to state. Selection persists so the user can
+        // continue tweaking the same rect (toolbar edits, further resize,
+        // or a move-drag). Early return before the move-drag commit code
+        // below, which would otherwise strip .selected on drag-end.
+        if (state.resizingRect) {
+            const rr = state.resizingRect;
+            const ov = getRectOverlays(state.currentPage)[rr.idx];
+            if (ov) {
+                ov.x = parseFloat(rr.el.style.left);
+                ov.y = parseFloat(rr.el.style.top);
+                ov.w = parseFloat(rr.el.style.width);
+                ov.h = parseFloat(rr.el.style.height);
+            }
+            state.resizingRect = null;
+            return;
+        }
+
         // Commit mark resize to state. Selection is kept so the user can
         // continue tweaking color / width / position.
         if (state.resizingMark) {
