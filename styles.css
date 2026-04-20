@@ -329,6 +329,12 @@ main {
 
 .text-overlay-handle {
     position: absolute;
+    /* Default position is tuned for text overlays, which have no resize
+       handles competing for the corner. Rect and mark override below
+       to push × further out (rect must clear its NE resize handle;
+       mark gets a small extra offset for visual breathing room from
+       the SVG body). z-index:11 keeps × above resize handles (z:10)
+       on rects so any residual overlap still hits × first. */
     top: -18px;
     right: -2px;
     width: 16px;
@@ -343,6 +349,7 @@ main {
     cursor: pointer;
     display: none;
     padding: 0;
+    z-index: 11;
 }
 
 .text-overlay:focus-within .text-overlay-handle,
@@ -393,9 +400,27 @@ main {
 
 .rect-overlay .text-overlay-handle {
     display: none;
+    /* Override base position: must clear NE resize handle (top:-7 right:-7,
+       14×14 → spans V:[-7,+7] H:[right-7,right+7]). At top:-24 right:-12,
+       × spans V:[-24,-8] H:[right-4,right+12]. Vertical gap: 1px (×bottom
+       -8 vs NE top -7). Horizontal: × left (right-4) overlaps NE right
+       (right+7) by 11px BUT vertical separation means no 2D overlap. The
+       smallest tighten from v2 (-28/-20) the user asked for. */
+    top: -24px;
+    right: -12px;
 }
 
-.rect-overlay:hover .text-overlay-handle {
+/* BUGFIX (× disappears when cursor leaves rect on the way to ×): × sits
+   at top:-28 right:-20, OUTSIDE the rect's bounding box. Relying on
+   `.rect-overlay:hover` alone meant the cursor had to stay over the
+   rect for × to show, so moving toward × crossed empty space, dropped
+   :hover, and made × vanish mid-approach. Showing × unconditionally
+   while `.selected` means once the user has clicked into "edit this
+   rect" mode, × is persistently visible and clickable regardless of
+   cursor position. Unselected rects keep the old hover-to-reveal
+   behavior so idle rects don't litter the canvas with × badges. */
+.rect-overlay:hover .text-overlay-handle,
+.rect-overlay.selected .text-overlay-handle {
     display: block;
 }
 
@@ -473,9 +498,19 @@ main {
 
 .mark-overlay .text-overlay-handle {
     display: none;
+    /* Override base position: mark's only resize handle sits at the SE
+       corner (bottom:-7 right:-7), so the NE area is clear. Pull × in
+       closer than the rect default but a bit further out than text so
+       it visually separates from the SVG body. */
+    top: -20px;
+    right: -8px;
 }
 
-.mark-overlay:hover .text-overlay-handle {
+/* Same "× disappears on approach" fix as rects: show × while .selected
+   so it stays clickable even when cursor has left the mark's box to
+   reach the × floating above/right of it. */
+.mark-overlay:hover .text-overlay-handle,
+.mark-overlay.selected .text-overlay-handle {
     display: block;
 }
 

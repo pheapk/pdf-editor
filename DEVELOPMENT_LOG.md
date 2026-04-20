@@ -134,6 +134,70 @@ User confirmed resize works on all 8 handles and the × visibility is mostly res
 
 Will decide with the user next session.
 
+### Session 4 — × handle positioning (2026-04-19)
+
+**Context.** Follow-up to session 3's residual bug. User chose option 1 (move ×, minimal change). What was meant to be a one-line CSS tweak became a four-iteration debug arc as each fix exposed the next failure mode.
+
+#### v1 — `top: -18px` → `top: -24px`
+
+Reasoning: × bottom (-8) clears NE resize handle top (-7) by 1px. Math looked clean on paper. Shipped → user reported:
+
+> "The position is raised but they turn gray over mouse hover. And mouse shows line crossing, not figure. Cannot X rect or mark."
+
+Diagnosis: 1px vertical clearance was insufficient because × and NE handle were still horizontally aligned (both at `right: -2` / `right: -7`). As the cursor approached × from below, it entered the NE handle's hit region first — cursor flipped to `nwse-resize` and the click landed on the handle, not ×.
+
+#### v2 — diagonal offset + z-index
+
+Pushed × to the OUTER-NE corner (`top: -28px; right: -20px; z-index: 11`):
+
+| Element | Vertical | Horizontal (rel. parent right) |
+| --- | --- | --- |
+| × | -28 to -12 | +4 to +20 |
+| NE resize handle | -7 to +7 | -7 to +7 |
+
+5px vertical + 11px horizontal gap — boxes no longer touch in 2D. `z-index: 11` provides belt-and-braces (resize handles are z:10) so any future positioning regression still hits × first. Mark also shifted (same shared class), even though mark's only handle is bottom-right. Acceptable side effect at this stage.
+
+User reloaded → reported a *new* bug:
+
+> "even when the Rect or Mark is selected, X disappears when the mouse no longer hovers over within the 'box' around the Rect or Mark. So it's not possible to click on it."
+
+#### v3 — the `:hover` disappearance trap
+
+Diagnosis: × was being shown via `.rect-overlay:hover .text-overlay-handle { display: block }`. Because × now sits *outside* the rect's bounding box, moving the cursor from rect interior toward × crosses empty space — the `:hover` on `.rect-overlay` drops, × hides, click never lands. The same trap killed the mark ×.
+
+Fix: decouple visibility from hover when the element is selected. Once the user clicks "edit this rect," × stays visible regardless of cursor position:
+
+```css
+.rect-overlay:hover .text-overlay-handle,
+.rect-overlay.selected .text-overlay-handle { display: block; }
+/* same for .mark-overlay */
+```
+
+Unselected rects keep hover-to-reveal so idle rects don't litter the canvas with × badges. User confirmed: works for text, rect, and mark.
+
+#### v4 — per-type tightening
+
+User feedback after v3:
+
+> "X is a bit far from the box. Rect has thick border so it doesn't look too bad. We can move that the smallest. Second is the Mark, it seems further. X of Text is quite far."
+
+The v2 position (-28/-20) was tuned to clear the rect's NE resize handle — but that constraint doesn't apply to text (no handles) or mark (only SE handle). One shared class meant text and mark inherited a position they didn't need. Solution: keep the base position for text and add per-type overrides:
+
+| Overlay | top | right | Rationale |
+| --- | --- | --- | --- |
+| Text | -18 | -2 | No handles. Restore the original tight-corner placement. |
+| Mark | -20 | -8 | NE clear; small extra offset reads as visual separation from the SVG body. |
+| Rect | -24 | -12 | Must clear NE handle (-7/-7). Vertical: × bottom -8 vs NE top -7 → 1px gap, but horizontal offset (-12) means cursor approach path doesn't pass through NE before reaching ×. |
+
+CSS specificity: `.rect-overlay .text-overlay-handle` (0,2,0) > `.text-overlay-handle` base (0,1,0), so overrides win cleanly without `!important`.
+
+**Lesson recorded.** A "one-line CSS fix" that touches a class shared by three component types is rarely one line. v1 ignored the cursor-approach geometry (only checked bounding box overlap), v2 ignored that the `:hover` reveal selector requires the cursor to stay inside the bounding box, v3 fixed visibility but kept the over-conservative position for all three types, v4 differentiated by handle constraints. Each step was correct given what was known — the shape of the bug just kept revealing more of itself.
+
+**Design notes — considered and rejected.**
+- **Moving × to top-left corner.** NW resize handle is there too — same conflict, just relocated.
+- **Hiding × while `.selected`.** Breaks the muscle memory of "hover → click × to delete" users have on unselected overlays. Adds a mode users must remember.
+- **Single position with maximum offset for all types.** What v2 effectively did. Looks disconnected on text (which has no reason to push × that far out).
+
 ---
 
 *This log is updated as work progresses. Each commit referenced above corresponds to a concrete slice of the story; `git log --oneline` is the authoritative timeline.*
