@@ -198,6 +198,31 @@ CSS specificity: `.rect-overlay .text-overlay-handle` (0,2,0) > `.text-overlay-h
 - **Hiding × while `.selected`.** Breaks the muscle memory of "hover → click × to delete" users have on unselected overlays. Adds a mode users must remember.
 - **Single position with maximum offset for all types.** What v2 effectively did. Looks disconnected on text (which has no reason to push × that far out).
 
+### Session 5 — Copy/paste for marks (2026-04-22)
+
+**User request.** "I'd like to add the ability to copy and paste Mark."
+
+**Design.** Keyboard only (Cmd/Ctrl+C, Cmd/Ctrl+V), no new UI. Paste lands on the *current* page (not the source page) so the user can "copy on page 2, navigate to page 5, paste here." Offset +20/+20 from the source coords — visibly distinct from the original without being disconnected. Repeated Cmd+V staircases because the clipboard's own `x/y` update to the just-placed position.
+
+**v1 — shipped but silently broken.**
+
+Added `state.markClipboard`, two branches in the existing document-level `keydown` listener. Syntax-checked, shipped. User reloaded and reported:
+
+> "Copy and paste do not work. To clarify we should be able to copy paste in the same page."
+
+Diagnosed end-to-end with Playwright rather than guessing:
+1. Placed a mark, focused the stroke-width input, confirmed `document.activeElement.tagName === 'INPUT'` AND `.mark-overlay.selected` exists.
+2. Pressed Meta+C / Meta+V → mark count unchanged.
+3. Blurred the input (focus → body) → Meta+C / Meta+V → staircase appeared as designed.
+
+**Root cause.** The v1 guard used `!isEditingField(document.activeElement)`, which matches `INPUT / TEXTAREA / SELECT / contentEditable`. Clicking a mark calls `e.preventDefault()` but does NOT blur previously-focused toolbar inputs — so once the user touches the stroke-width field or color picker, focus stays on that `<input>` even while the mark is visibly selected. Our handler thought the user was typing in a form field and yielded to the browser's native copy/paste (which does nothing meaningful on a color picker).
+
+**Fix.** Narrow the guard: only bail if `document.activeElement.isContentEditable` is true. That preserves native copy/paste inside text overlays (where the user really *is* selecting text) but lets our shortcut run when the focus is on a mere form input that has nothing interesting to copy. A visibly-selected mark is the user's subject of attention regardless of which sliver of DOM happens to hold focus.
+
+**Why not blur on mark click?** Considered and rejected. Stealing focus on every mark click would break the "click a mark, tweak its color, click somewhere else" muscle memory — users expect focus to stay where they put it. The guard change is surgical; it only affects the two new shortcuts.
+
+**Commits.** v1 (broken) and the fix land together in the session-5 commit — v1 never shipped on its own, since Playwright caught the bug before it left the branch.
+
 ---
 
 *This log is updated as work progresses. Each commit referenced above corresponds to a concrete slice of the story; `git log --oneline` is the authoritative timeline.*

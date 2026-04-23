@@ -58,6 +58,11 @@
         // an 'e' keeps the west edge fixed, so only w changes; same for
         // n/s on the vertical axis).
         resizingRect: null,
+        // Clipboard for Cmd/Ctrl+C → Cmd/Ctrl+V on marks. Holds a snapshot of
+        // the copied mark's fields (no z, no page — the pasted copy goes onto
+        // whichever page is currently visible with a fresh z so it lands on
+        // top). Cleared on new-file load; persists across page navigation.
+        markClipboard: null,
         // Page mapping: virtual page index → original pdf.js page number
         pageMap: [],
         // BUGFIX (bug 2 — can't recolor existing text): tracks the index of
@@ -247,6 +252,7 @@
             state.textOverlays = {};
             state.rectOverlays = {};
             state.markOverlays = {};
+            state.markClipboard = null;
             state.pageMap = Array.from({ length: state.totalPages }, (_, i) => i + 1);
 
             uploadArea.classList.add('hidden');
@@ -1489,6 +1495,69 @@
         if (e.ctrlKey && e.key === 's') {
             e.preventDefault();
             if (state.pdfDoc) saveBtn.click();
+        }
+        // Cmd/Ctrl+C to copy the currently selected mark. Uses metaKey too so
+        // Mac users get Cmd-based shortcuts (Ctrl+Z above predates this and is
+        // left alone).
+        //
+        // BUGFIX (v1 of copy/paste bailed when any form input had focus):
+        // clicking a mark does not blur previously-focused toolbar inputs
+        // (color picker, strokeWidth number field) because the mark's
+        // mousedown only calls e.preventDefault(). So once the user touches
+        // the mark toolbar, `document.activeElement` stays on that <input>
+        // even after the mark is visibly selected, and the old
+        // `!isEditingField` guard silently ate Cmd+C / Cmd+V. Fix: only bail
+        // when the user is actually editing a contentEditable text overlay
+        // (where native copy/paste of text is the real intent). Form inputs
+        // yield to the mark — they have nothing useful to copy when a mark
+        // is the user's subject of attention.
+        const editingText = document.activeElement && document.activeElement.isContentEditable;
+        if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !editingText) {
+            const sel = textLayer.querySelector('.mark-overlay.selected');
+            if (sel) {
+                const idx = parseInt(sel.dataset.markIndex, 10);
+                const ov = getMarkOverlays(state.currentPage)[idx];
+                if (ov) {
+                    state.markClipboard = {
+                        x: ov.x, y: ov.y, w: ov.w, h: ov.h,
+                        kind: ov.kind, color: ov.color, strokeWidth: ov.strokeWidth,
+                    };
+                    e.preventDefault();
+                }
+            }
+        }
+        // Cmd/Ctrl+V to paste the clipboard mark onto the current page. Offset
+        // +20/+20 from the source coords (clamped inside the canvas) so the
+        // paste is visibly distinct from the original rather than stacked on
+        // top. Clipboard x/y are updated to the just-placed position so
+        // repeated Cmd+V produces a staircase rather than pasting at the same
+        // offset from the original forever.
+        if ((e.ctrlKey || e.metaKey) && e.key === 'v' && !editingText) {
+            if (state.markClipboard) {
+                const cb = state.markClipboard;
+                const layerRect = textLayer.getBoundingClientRect();
+                const newX = Math.max(0, Math.min(layerRect.width - cb.w, cb.x + 20));
+                const newY = Math.max(0, Math.min(layerRect.height - cb.h, cb.y + 20));
+                const overlay = {
+                    x: newX, y: newY, w: cb.w, h: cb.h,
+                    kind: cb.kind, color: cb.color, strokeWidth: cb.strokeWidth,
+                    z: state.nextZ++,
+                };
+                getMarkOverlays(state.currentPage).push(overlay);
+                const newIdx = getMarkOverlays(state.currentPage).length - 1;
+                clearRectSelection();
+                clearMarkSelection();
+                setTool('mark');
+                renderAllOverlays();
+                const newEl = textLayer.querySelector('.mark-overlay[data-mark-index="' + newIdx + '"]');
+                if (newEl) {
+                    newEl.classList.add('selected');
+                    syncToolbarToMark(overlay);
+                }
+                cb.x = newX;
+                cb.y = newY;
+                e.preventDefault();
+            }
         }
         // BUGFIX (bug 3): Escape deselects any active rect. Gives the user
         // an explicit, always-available way to leave edit mode before
