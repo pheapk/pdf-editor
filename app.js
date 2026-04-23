@@ -58,11 +58,13 @@
         // an 'e' keeps the west edge fixed, so only w changes; same for
         // n/s on the vertical axis).
         resizingRect: null,
-        // Clipboard for Cmd/Ctrl+C → Cmd/Ctrl+V on marks. Holds a snapshot of
-        // the copied mark's fields (no z, no page — the pasted copy goes onto
-        // whichever page is currently visible with a fresh z so it lands on
-        // top). Cleared on new-file load; persists across page navigation.
-        markClipboard: null,
+        // Unified clipboard for Cmd/Ctrl+C → Cmd/Ctrl+V. Shape:
+        //   { type: 'mark' | 'text', data: {...snapshot of overlay fields} }
+        // Single slot (like the OS clipboard) — copying a text replaces any
+        // copied mark and vice versa. `data` omits `z` and page: the pasted
+        // copy lands on whichever page is visible with a fresh z so it draws
+        // on top. Cleared on new-file load; persists across page navigation.
+        clipboard: null,
         // Page mapping: virtual page index → original pdf.js page number
         pageMap: [],
         // BUGFIX (bug 2 — can't recolor existing text): tracks the index of
@@ -252,7 +254,7 @@
             state.textOverlays = {};
             state.rectOverlays = {};
             state.markOverlays = {};
-            state.markClipboard = null;
+            state.clipboard = null;
             state.pageMap = Array.from({ length: state.totalPages }, (_, i) => i + 1);
 
             uploadArea.classList.add('hidden');
@@ -1496,9 +1498,15 @@
             e.preventDefault();
             if (state.pdfDoc) saveBtn.click();
         }
-        // Cmd/Ctrl+C to copy the currently selected mark. Uses metaKey too so
-        // Mac users get Cmd-based shortcuts (Ctrl+Z above predates this and is
-        // left alone).
+        // Cmd/Ctrl+C to copy the currently selected mark OR the last-focused
+        // text. Uses metaKey too so Mac users get Cmd-based shortcuts
+        // (Ctrl+Z above predates this and is left alone).
+        //
+        // The `editingText` guard yields to native copy while the user is
+        // actively inside a contentEditable (per-character text copy is the
+        // real intent there). To copy a text OVERLAY, the user blurs first
+        // (click elsewhere, Escape) — `lastFocusedTextIdx` then identifies
+        // which overlay was the subject of attention.
         //
         // BUGFIX (v1 of copy/paste bailed when any form input had focus):
         // clicking a mark does not blur previously-focused toolbar inputs
@@ -1507,34 +1515,51 @@
         // the mark toolbar, `document.activeElement` stays on that <input>
         // even after the mark is visibly selected, and the old
         // `!isEditingField` guard silently ate Cmd+C / Cmd+V. Fix: only bail
-        // when the user is actually editing a contentEditable text overlay
-        // (where native copy/paste of text is the real intent). Form inputs
-        // yield to the mark — they have nothing useful to copy when a mark
-        // is the user's subject of attention.
+        // on contentEditable. Form inputs yield to the mark/text — they have
+        // nothing useful to copy when an overlay is the user's subject.
+        //
+        // Copy priority: a selected MARK beats the last-focused TEXT. A user
+        // who just clicked a mark's selection outline has moved focus away
+        // from any prior text; honoring the mark matches what they see.
         const editingText = document.activeElement && document.activeElement.isContentEditable;
         if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !editingText) {
-            const sel = textLayer.querySelector('.mark-overlay.selected');
-            if (sel) {
-                const idx = parseInt(sel.dataset.markIndex, 10);
+            const selMark = textLayer.querySelector('.mark-overlay.selected');
+            if (selMark) {
+                const idx = parseInt(selMark.dataset.markIndex, 10);
                 const ov = getMarkOverlays(state.currentPage)[idx];
                 if (ov) {
-                    state.markClipboard = {
-                        x: ov.x, y: ov.y, w: ov.w, h: ov.h,
-                        kind: ov.kind, color: ov.color, strokeWidth: ov.strokeWidth,
+                    state.clipboard = {
+                        type: 'mark',
+                        data: {
+                            x: ov.x, y: ov.y, w: ov.w, h: ov.h,
+                            kind: ov.kind, color: ov.color, strokeWidth: ov.strokeWidth,
+                        },
+                    };
+                    e.preventDefault();
+                }
+            } else if (state.lastFocusedTextIdx != null) {
+                const ov = getOverlays(state.currentPage)[state.lastFocusedTextIdx];
+                if (ov) {
+                    state.clipboard = {
+                        type: 'text',
+                        data: {
+                            x: ov.x, y: ov.y,
+                            text: ov.text, fontSize: ov.fontSize,
+                            color: ov.color, fontFamily: ov.fontFamily,
+                        },
                     };
                     e.preventDefault();
                 }
             }
         }
-        // Cmd/Ctrl+V to paste the clipboard mark onto the current page. Offset
-        // +20/+20 from the source coords (clamped inside the canvas) so the
-        // paste is visibly distinct from the original rather than stacked on
-        // top. Clipboard x/y are updated to the just-placed position so
-        // repeated Cmd+V produces a staircase rather than pasting at the same
-        // offset from the original forever.
+        // Cmd/Ctrl+V pastes whatever is in the clipboard onto the current
+        // page. Offset +20/+20 from the source coords (clamped) so the paste
+        // is visibly distinct from the original. Clipboard x/y are updated to
+        // the just-placed position so repeated Cmd+V produces a staircase
+        // rather than pasting at the same offset from the original forever.
         if ((e.ctrlKey || e.metaKey) && e.key === 'v' && !editingText) {
-            if (state.markClipboard) {
-                const cb = state.markClipboard;
+            if (state.clipboard && state.clipboard.type === 'mark') {
+                const cb = state.clipboard.data;
                 const layerRect = textLayer.getBoundingClientRect();
                 const newX = Math.max(0, Math.min(layerRect.width - cb.w, cb.x + 20));
                 const newY = Math.max(0, Math.min(layerRect.height - cb.h, cb.y + 20));
@@ -1554,6 +1579,40 @@
                     newEl.classList.add('selected');
                     syncToolbarToMark(overlay);
                 }
+                cb.x = newX;
+                cb.y = newY;
+                e.preventDefault();
+            } else if (state.clipboard && state.clipboard.type === 'text') {
+                // Text width isn't stored (auto-sized by contentEditable), so
+                // clamp conservatively using a 40px floor — just enough that
+                // the overlay's drag surface stays on-canvas even if the text
+                // is empty.
+                const cb = state.clipboard.data;
+                const layerRect = textLayer.getBoundingClientRect();
+                const newX = Math.max(0, Math.min(layerRect.width - 40, cb.x + 20));
+                const newY = Math.max(0, Math.min(layerRect.height - 40, cb.y + 20));
+                const overlay = {
+                    x: newX, y: newY,
+                    text: cb.text,
+                    fontSize: cb.fontSize,
+                    color: cb.color,
+                    fontFamily: cb.fontFamily,
+                    z: state.nextZ++,
+                };
+                getOverlays(state.currentPage).push(overlay);
+                const newIdx = getOverlays(state.currentPage).length - 1;
+                clearRectSelection();
+                clearMarkSelection();
+                renderAllOverlays();
+                // Do NOT focusTextContent() — focusing would immediately put
+                // the user into contentEditable mode, so the next Cmd+V would
+                // hit the `editingText` guard and native-paste instead of
+                // staircase-pasting another overlay. Leaving unfocused lets
+                // the user hammer Cmd+V to stamp copies. Update
+                // lastFocusedTextIdx AFTER renderAllOverlays (which resets it
+                // to null on every DOM rebuild) so the pasted overlay is the
+                // new "copy target" for a subsequent Cmd+C.
+                state.lastFocusedTextIdx = newIdx;
                 cb.x = newX;
                 cb.y = newY;
                 e.preventDefault();

@@ -225,4 +225,63 @@ Diagnosed end-to-end with Playwright rather than guessing:
 
 ---
 
+## Session 6 — 2026-04-23 Thu: Text copy / paste (mirror Mark)
+
+With Mark copy / paste shipped and validated in Session 5, the natural next step was to extend the same shortcut to Text overlays. User's framing:
+
+> "Now let add the copy and paste feature we did with Mark to Text."
+
+followed by a critical carve-out:
+
+> "it only works when the whole textbox is selected but not while editing text. While editing text, cmd/ctrl + c should copy work like normal text copy."
+
+That constraint is what shaped the whole design. Rect copy / paste is deferred — one overlay type at a time.
+
+### Design decision: unified clipboard, single slot
+
+Renamed `state.markClipboard` → `state.clipboard = { type: 'mark' | 'text', data: {...} }`. A single-slot, discriminated clipboard matches the OS clipboard mental model — copying a text kicks out a copied mark and vice versa. Two-slot alternatives were considered and rejected: the UX becomes "which one gets pasted?" and no keyboard shortcut disambiguates cleanly. Single slot also makes the eventual Rect extension trivial (just add a third `type`).
+
+### Copy priority: selected mark first, then focused text
+
+When `!editingText`, the copy handler looks for a selected mark first; falling through, it reads `state.lastFocusedTextIdx` (the index of the most recently focused text on the current page — already tracked since Session 1 for the toolbar-recolor fix). This ordering matches what the user sees: a visible mark selection outline beats an invisible "text was last focused" hint.
+
+Text doesn't have an explicit "selected" state — the contentEditable either has focus (editing) or it doesn't (candidate for overlay-copy). To copy a text overlay the user blurs first (click elsewhere, Escape). `lastFocusedTextIdx` survives the blur, so a Cmd+C right after tells us which overlay was the subject of attention.
+
+### The carve-out: `isContentEditable` guard stays
+
+`editingText = document.activeElement && document.activeElement.isContentEditable` — unchanged from Session 5. When the user is actively typing inside a text overlay, Cmd+C yields to the browser's native `copy` event (the text range in the `Selection` is what matters there, not the overlay itself). The handler doesn't call `preventDefault`, so the browser's default behavior runs. That's exactly the UX the user asked for.
+
+Blurring the contentEditable (Escape, click-elsewhere) returns to "overlay copy" mode automatically — no extra state to flip.
+
+### Subtle bug caught during design: set lastFocusedTextIdx AFTER render
+
+First draft assigned `state.lastFocusedTextIdx = newIdx` before calling `renderAllOverlays()`. But `renderAllOverlays()` unconditionally nulls that field on every DOM rebuild (by design — stale indices after delete/undo/page-change are a known footgun; see the original `lastFocusedTextIdx` docstring). So the assignment was immediately clobbered, and the *next* Cmd+C had no text to target.
+
+Fix: assign *after* render. A one-line ordering change with a comment explaining why. Easy to get wrong if someone refactors without reading the docstring, which is why the comment lives inline.
+
+### Subtle UX choice: paste does NOT auto-focus
+
+Text creation (click-to-place) auto-focuses the new overlay's contentEditable so the user can type immediately. But paste is different — the *point* of Cmd+V is to stamp a copy of already-authored text. Auto-focusing would flip into contentEditable mode, and the next Cmd+V would hit the `editingText` guard and native-paste instead of stamping another overlay. The staircase UX that makes copy / paste useful in this editor (hammer Cmd+V to place multiples) would break on the second press.
+
+So paste leaves the pasted text unfocused. `lastFocusedTextIdx` is updated to point at the new overlay so a subsequent Cmd+C copies the just-pasted copy (which is usually what the user wants).
+
+### Clamping heuristic for text
+
+Marks store `w` and `h`, so the clamp `max(0, min(layerRect.w - w, x+20))` keeps the whole mark on-canvas. Text has no stored width — contentEditable auto-sizes to its content, which changes as the user types. Used a conservative 40px floor instead: `max(0, min(layerRect.w - 40, x+20))`. Forty is roughly the smallest visible drag surface; the clamp prevents a paste near the right edge from pushing the overlay entirely off-canvas, but it doesn't try to be perfect for wide content. Good enough.
+
+### Verification (Playwright)
+
+Dev server on :8000, fixture `test/fixtures/sample.pdf`, cache-bust via `?v=N`. Four test cases ran green:
+
+1. **Text staircase.** Place text, type "hello", blur, Cmd+C, Cmd+V, Cmd+V. Three overlays at (149,149), (169,169), (189,189) — exact +20/+20 delta as specified.
+2. **Native-copy carve-out.** Focus first text, select contents, Cmd+C then Cmd+V. Overlay count stayed at 3. `document.activeElement.isContentEditable` confirmed `true`. Handler did nothing (no `preventDefault`), browser handled copy / paste natively.
+3. **Mark regression.** Switch to Mark tool, place a mark, Cmd+C, Cmd+V, Cmd+V. Three marks staircased. Session 5 behavior unchanged.
+4. **Cross-type replace.** Copy mark → copy text → Cmd+V. Text count +1, mark count +0. Single-slot behavior confirmed.
+
+### File touched
+
+- `app.js` — state rename + keydown handler extension. Roughly 30 lines added around the existing mark branch.
+
+---
+
 *This log is updated as work progresses. Each commit referenced above corresponds to a concrete slice of the story; `git log --oneline` is the authoritative timeline.*
