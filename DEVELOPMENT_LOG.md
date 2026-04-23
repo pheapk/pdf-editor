@@ -34,7 +34,7 @@ Canvas is rendered at `state.scale = 1.5` × the PDF's native size. Overlay `x/y
 
 ## Session log
 
-### Session 1 — Initial bug fixes (2026-04-17 → 2026-04-18)
+### Session 1 — Initial bug fixes (2026-04-17 Fri → 2026-04-18 Sat)
 
 Four bugs reported from prior use:
 
@@ -49,7 +49,7 @@ A second pass (commit `75765aa`) refined four more issues:
 - **Text drag hit area**: the outer `.text-overlay` wrapper had only a 1px dashed border — essentially no click target. *Fix:* 4px padding on the wrapper, inner content keeps the `text` cursor, outer reads as a drag handle.
 - **Text color inheritance**: some browsers don't cleanly cascade `color` into contentEditable regions. *Fix:* set color on both the wrapper and the inner content element.
 
-### Session 2 — Mark tool + z-order (2026-04-18)
+### Session 2 — Mark tool + z-order (2026-04-18 Sat)
 
 **Feature: checkmark / crossmark overlays.** User wanted a clean way to mark PDF checkboxes — rects or text were awkward approximations.
 
@@ -69,7 +69,7 @@ A second pass (commit `75765aa`) refined four more issues:
 
 **Related fix — z-order.** Rects were always drawn before text, so a 100%-opaque rect drawn *after* text still had text bleeding through (both in editor and in the exported PDF). *Fix:* add a monotonic `z` counter to every overlay at creation; merge all overlays and sort by z at both render time and save time. Array.sort is stable, so missing/duplicate z values fall back to insertion order. → commits `c611e31` / `9da0b56`.
 
-### Session 3 — Handle visibility + rect resize (2026-04-18)
+### Session 3 — Handle visibility + rect resize (2026-04-18 Sat)
 
 **User report (verbatim):**
 > 1. The X on Rectangle turns gray when mouse hover so it's hard to see; it's almost like it's a bug. That X is still there but it is gray almost like the white background so hard to see.
@@ -134,7 +134,7 @@ User confirmed resize works on all 8 handles and the × visibility is mostly res
 
 Will decide with the user next session.
 
-### Session 4 — × handle positioning (2026-04-19)
+### Session 4 — × handle positioning (2026-04-19 Sun)
 
 **Context.** Follow-up to session 3's residual bug. User chose option 1 (move ×, minimal change). What was meant to be a one-line CSS tweak became a four-iteration debug arc as each fix exposed the next failure mode.
 
@@ -198,7 +198,7 @@ CSS specificity: `.rect-overlay .text-overlay-handle` (0,2,0) > `.text-overlay-h
 - **Hiding × while `.selected`.** Breaks the muscle memory of "hover → click × to delete" users have on unselected overlays. Adds a mode users must remember.
 - **Single position with maximum offset for all types.** What v2 effectively did. Looks disconnected on text (which has no reason to push × that far out).
 
-### Session 5 — Copy/paste for marks (2026-04-22)
+### Session 5 — Copy/paste for marks (2026-04-22 Wed)
 
 **User request.** "I'd like to add the ability to copy and paste Mark."
 
