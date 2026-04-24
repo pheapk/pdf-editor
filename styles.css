@@ -323,8 +323,21 @@ main {
     background: rgba(37, 99, 235, 0.04);
 }
 
+/* Box-level selection (click the border/padding gutter). Distinct from
+   :hover (blue dashed) and :focus-within (blue solid on editing content)
+   so the user can tell at a glance whether the overlay is selected,
+   hovered, or being edited. Matches mark's orange outline for parity —
+   both kinds are "clicked and stays selected" artifacts. */
 .text-overlay.selected {
-    border-color: var(--primary);
+    outline: 3px solid #f59e0b;
+    outline-offset: 2px;
+}
+
+/* Keep the × delete handle visible while box-selected, same as mark —
+   otherwise the user who clicked the border to select then moved the
+   cursor away loses the handle. */
+.text-overlay.selected .text-overlay-handle {
+    display: block;
 }
 
 .text-overlay-handle {

@@ -393,6 +393,11 @@
         // `.text-overlay-content:focus` and silently no-op'd.
         content.addEventListener('focus', () => {
             state.lastFocusedTextIdx = idx;
+            // Entering edit mode — the wrapper-level "box selection" is no
+            // longer meaningful (a selected-AND-editing dual state would be
+            // confusing). Clear any .selected on ALL text overlays so only
+            // one of {selected box, focused content} is visible at a time.
+            clearTextSelection();
             fontSizeIn.value = ov.fontSize;
             fontColorIn.value = ov.color;
             fontFamilyIn.value = ov.fontFamily;
@@ -414,10 +419,34 @@
         div.addEventListener('mousedown', (e) => {
             if (e.target === content || content.contains(e.target)) return;
             if (e.target === handle) return;
-            // Don't swallow the event if the user is actively editing —
-            // a mousedown on the border while focused would otherwise blur
-            // the content and feel jarring. Let blur happen naturally first.
+            // preventDefault so the browser doesn't try to select text in
+            // the wrapper or start a native drag — we're handling the
+            // mousedown for our own selection + drag pipeline below.
             e.preventDefault();
+
+            // Explicitly blur any actively-edited contentEditable. Without
+            // this, preventDefault above would leave the caret parked in
+            // whichever overlay the user was previously editing (our
+            // target wrapper, or another text overlay entirely). That
+            // meant editingText === true on the NEXT keydown, so Cmd+C
+            // bailed to native copy on an empty Selection and nothing
+            // happened — symptom the user reported as "copy works only
+            // sometimes." Forcing the blur here makes box-selection an
+            // unambiguous state: caret is out, .selected is in.
+            if (document.activeElement && document.activeElement.isContentEditable) {
+                document.activeElement.blur();
+            }
+
+            // Box-level selection: clicking the wrapper (the 4px padding
+            // gutter around the contentEditable) selects the overlay so
+            // Cmd+C can copy it. Mirrors Mark's "click → stays selected"
+            // UX. A subsequent click INSIDE the content clears this via
+            // the content focus handler above, so we never hold both
+            // states at once.
+            clearRectSelection();
+            clearMarkSelection();
+            clearTextSelection();
+            div.classList.add('selected');
 
             const r = div.getBoundingClientRect();
             state.draggingText = {
@@ -461,6 +490,16 @@
 
     function clearMarkSelection() {
         textLayer.querySelectorAll('.mark-overlay.selected')
+            .forEach((el) => el.classList.remove('selected'));
+    }
+
+    // Mirror of clearMarkSelection for text overlays. Text selection is the
+    // "box-level" selection (wrapper has .selected) and is distinct from the
+    // contentEditable edit focus — clicking the border selects the box,
+    // clicking inside enters edit mode. Selection drives Cmd+C target when
+    // the user is NOT actively typing (see keydown handler).
+    function clearTextSelection() {
+        textLayer.querySelectorAll('.text-overlay.selected')
             .forEach((el) => el.classList.remove('selected'));
     }
 
@@ -513,6 +552,10 @@
         // Same reasoning for marks — a stale mark selection would silently
         // receive color/width edits meant for the next mark.
         clearMarkSelection();
+        // Same reasoning for box-selected text overlays (Cmd+C would pick
+        // them up otherwise, which confuses the user who just switched
+        // tools and expects a clean slate).
+        clearTextSelection();
     }
 
     toolMarkBtn.addEventListener('click', () => setTool('mark'));
@@ -538,6 +581,7 @@
             if (e.target.closest('.text-overlay') || e.target.closest('.rect-overlay') || e.target.closest('.mark-overlay')) return;
             clearRectSelection();
             clearMarkSelection();
+            clearTextSelection();
             const rect = textLayer.getBoundingClientRect();
             const cx = e.clientX - rect.left;
             const cy = e.clientY - rect.top;
@@ -568,9 +612,12 @@
         if (e.target.closest('.text-overlay') || e.target.closest('.rect-overlay') || e.target.closest('.mark-overlay')) return;
 
         // Clicking empty canvas in text mode is an unambiguous "I'm done with
-        // that rect I had selected" signal — drop the selection so later
-        // toolbar tweaks don't silently rewrite it. (See clearRectSelection.)
+        // whatever I had selected" signal — drop every selection kind so later
+        // toolbar tweaks don't silently rewrite stale overlays. (See the
+        // clear*Selection helpers above.)
         clearRectSelection();
+        clearMarkSelection();
+        clearTextSelection();
 
         const rect = textLayer.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -612,6 +659,8 @@
         // those values are written to the OLD rect (or both). See
         // clearRectSelection() comment for the full chain.
         clearRectSelection();
+        clearMarkSelection();
+        clearTextSelection();
 
         const rect = textLayer.getBoundingClientRect();
         state.drawing = true;
@@ -1524,6 +1573,7 @@
         const editingText = document.activeElement && document.activeElement.isContentEditable;
         if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !editingText) {
             const selMark = textLayer.querySelector('.mark-overlay.selected');
+            const selText = textLayer.querySelector('.text-overlay.selected');
             if (selMark) {
                 const idx = parseInt(selMark.dataset.markIndex, 10);
                 const ov = getMarkOverlays(state.currentPage)[idx];
@@ -1537,7 +1587,26 @@
                     };
                     e.preventDefault();
                 }
+            } else if (selText) {
+                // Explicit box-level selection wins over the implicit
+                // "last focused" hint — the user clicked the border
+                // specifically to say THIS is what I want to copy.
+                const idx = parseInt(selText.dataset.index, 10);
+                const ov = getOverlays(state.currentPage)[idx];
+                if (ov) {
+                    state.clipboard = {
+                        type: 'text',
+                        data: {
+                            x: ov.x, y: ov.y,
+                            text: ov.text, fontSize: ov.fontSize,
+                            color: ov.color, fontFamily: ov.fontFamily,
+                        },
+                    };
+                    e.preventDefault();
+                }
             } else if (state.lastFocusedTextIdx != null) {
+                // Fallback for users who blur-then-copy without explicitly
+                // clicking the border (e.g. Escape out of editing, Cmd+C).
                 const ov = getOverlays(state.currentPage)[state.lastFocusedTextIdx];
                 if (ov) {
                     state.clipboard = {
@@ -1603,6 +1672,7 @@
                 const newIdx = getOverlays(state.currentPage).length - 1;
                 clearRectSelection();
                 clearMarkSelection();
+                clearTextSelection();
                 renderAllOverlays();
                 // Do NOT focusTextContent() — focusing would immediately put
                 // the user into contentEditable mode, so the next Cmd+V would
@@ -1613,6 +1683,13 @@
                 // to null on every DOM rebuild) so the pasted overlay is the
                 // new "copy target" for a subsequent Cmd+C.
                 state.lastFocusedTextIdx = newIdx;
+                // Mark the pasted overlay as box-selected — gives the user
+                // visible feedback ("this is what just landed") and matches
+                // the mark paste behavior above. Because content is NOT
+                // focused, `editingText` stays false and the next Cmd+V can
+                // staircase-paste again.
+                const newEl = textLayer.querySelector('.text-overlay[data-index="' + newIdx + '"]');
+                if (newEl) newEl.classList.add('selected');
                 cb.x = newX;
                 cb.y = newY;
                 e.preventDefault();
@@ -1625,6 +1702,13 @@
         if (e.key === 'Escape') {
             clearRectSelection();
             clearMarkSelection();
+            clearTextSelection();
+            // Also blur any actively-edited contentEditable so Escape is a
+            // single "leave every edit state" key — matches user muscle
+            // memory from most editors.
+            if (document.activeElement && document.activeElement.isContentEditable) {
+                document.activeElement.blur();
+            }
         }
     });
 
@@ -1643,5 +1727,6 @@
         if (markControls.contains(e.target)) return;
         clearRectSelection();
         clearMarkSelection();
+        clearTextSelection();
     });
 })();

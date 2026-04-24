@@ -284,4 +284,84 @@ Dev server on :8000, fixture `test/fixtures/sample.pdf`, cache-bust via `?v=N`. 
 
 ---
 
+## Session 7 — 2026-04-23 Thu: Box-level text selection (parity with Mark)
+
+Right after Session 6 shipped, the user tested copy / paste and flagged a real UX gap:
+
+> "When selecting the textbox in the middle, the cursor focus is inside the textbox, so cmd/ctrl + c doesn't copy the textbox. When selecting the border of the textbox it doesn't select the textbox. So we need to be able to select the border of the textbox, and that will select it and keep it selected. Then we can cmd/ctrl+c to copy and paste it. Mark after clicking on it, it stays selected."
+
+The Session-6 design relied on `lastFocusedTextIdx` as the implicit "copy target" — the user had to blur first (click away or Escape) before Cmd+C would see a text overlay to copy. That's a hidden state: nothing on screen tells you that a text is still "logically selected" after you click away. Mark's UX doesn't have this problem because clicking a mark adds a visible `.selected` outline that persists.
+
+Fix: give text overlays the same two-layer interaction as marks. Clicking the **wrapper's padding gutter** (the 4px border region) adds `.selected`; clicking **inside the contentEditable** enters edit mode and clears any selection.
+
+### Two states, never both
+
+The content `focus` handler now calls `clearTextSelection()`, so a text is either box-selected OR being edited, never both. Rationale: if a text were simultaneously outlined AND focused, the user would reasonably expect Cmd+C to copy one or the other, but our `editingText` guard forces the "focused" interpretation — so the outline would become a visual lie. Clearing it on focus means what you see matches what the keybind does.
+
+### Copy priority: explicit beats implicit
+
+The keydown copy handler now tries three sources in order:
+
+1. `.mark-overlay.selected` — Session 5 behavior, unchanged.
+2. `.text-overlay.selected` — **new**: the wrapper the user just box-clicked.
+3. `state.lastFocusedTextIdx` — fallback for users who Escape out of editing and immediately hit Cmd+C. Kept because it's the natural "I was just here" hint and was the only path in Session 6.
+
+Explicit selection beats the implicit "last focused" hint. If the user clicked a border, that's their unambiguous answer to "what do you want to copy?"
+
+### Visual: orange outline, matches Mark
+
+`.text-overlay.selected` previously set only `border-color: var(--primary)` (same blue as `:hover`), so selection was invisible against the hover state. Replaced with `outline: 3px solid #f59e0b` (same warm orange Mark uses). Three states now read distinctly:
+
+- **Hover** — blue dashed border + subtle blue tint.
+- **Editing** — blue solid border (`:focus-within`).
+- **Box-selected** — orange outline with offset, plus the × delete handle stays visible.
+
+No overlap. If the user hovers a selected text, the outline persists because `outline` is separate from `border`.
+
+### Other behavior changes (all small)
+
+- **Escape**: now blurs the contentEditable in addition to clearing selections. A single key leaves every edit state — no more "Escape, but I'm still somehow editing."
+- **Outside-click clear**: `document mousedown` outside `#textLayer` / toolbars now also calls `clearTextSelection()`. Selections don't leak when the user drags the page around.
+- **setTool**: clears text selection (already cleared rect and mark). Switching tools should never leave a stale box-selected overlay to receive stray Cmd+C.
+- **Mark / rect creation handlers**: also clear text selection. Any "I'm starting a new overlay" action is a complete reset.
+- **Paste**: after a text paste, the new overlay gets `.selected` added. Visible feedback for where the paste landed, and matches the mark-paste behavior from Session 5.
+
+### Verification (Playwright)
+
+Four cases, all green:
+
+1. **Border click selects.** Click the 4px padding gutter at a wrapper's edge → `.text-overlay.selected` appears, `document.activeElement.isContentEditable === false`.
+2. **Selected → Cmd+C → Cmd+V → Cmd+V staircases.** Three overlays at y+0 / +20 / +40, last is `.selected`.
+3. **Content click clears selection.** Focus the contentEditable of a selected overlay → selection drops, `editingText === true`.
+4. **Native-copy carve-out still intact.** Focus content, select range, Cmd+C → `defaultPrevented === false`, overlay count unchanged.
+
+Computed-style check confirmed the selected outline renders at `rgb(245, 158, 11)` (the Mark orange) so there's no stylesheet-cascade surprise.
+
+### Files touched
+
+- `app.js` — one new helper (`clearTextSelection`), box-selection hook in the wrapper mousedown, clear on content focus, copy-priority extension, Escape / setTool / outside-click / paste integration.
+- `styles.css` — `.text-overlay.selected` replaced with orange outline + persistent × handle rule.
+
+### Follow-up: the "works only sometimes" bug
+
+After the first version of this session shipped, the user tested and reported:
+
+> "Copy seems to work, but randomly, because the cursor stays in the textbox when selecting the textborder border, or selecting another textbox. So when selecting a textbox border, the cursor needs to stay out of the inside the textbox."
+
+**Root cause.** The wrapper mousedown calls `e.preventDefault()` so the browser doesn't start a native text selection or drag. But `preventDefault` on mousedown also suppresses the implicit blur that would normally fire when clicking a focusable element elsewhere. Net effect: the caret stayed parked in whichever overlay the user was previously editing (often a *different* text overlay). `editingText` was still `true` on the next keydown, so Cmd+C hit our carve-out and bailed to the browser's native copy on an empty Selection — which is the same as pressing Cmd+C on nothing. Symptom: "copy worked sometimes" (when nothing was focused) and "copy did nothing other times" (when a stale caret lingered).
+
+**Fix.** Explicit blur in the wrapper mousedown, right before adding `.selected`:
+
+```js
+if (document.activeElement && document.activeElement.isContentEditable) {
+    document.activeElement.blur();
+}
+```
+
+Once blurred, `activeElement` is `<body>`, `editingText` is `false`, and the next keydown sees exactly one text overlay with `.selected` — an unambiguous copy target.
+
+**Verified.** Created text A ("alpha"), text B ("beta"), left caret parked in B, clicked A's border, pressed Cmd+C then Cmd+V: `editingText: false`, `activeTag: BODY`, `aSelected: true`, paste produced a third overlay with text "alpha". No more "works only sometimes."
+
+---
+
 *This log is updated as work progresses. Each commit referenced above corresponds to a concrete slice of the story; `git log --oneline` is the authoritative timeline.*
