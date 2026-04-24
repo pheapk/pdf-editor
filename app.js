@@ -424,18 +424,12 @@
             // mousedown for our own selection + drag pipeline below.
             e.preventDefault();
 
-            // Explicitly blur any actively-edited contentEditable. Without
-            // this, preventDefault above would leave the caret parked in
-            // whichever overlay the user was previously editing (our
-            // target wrapper, or another text overlay entirely). That
-            // meant editingText === true on the NEXT keydown, so Cmd+C
-            // bailed to native copy on an empty Selection and nothing
-            // happened — symptom the user reported as "copy works only
-            // sometimes." Forcing the blur here makes box-selection an
-            // unambiguous state: caret is out, .selected is in.
-            if (document.activeElement && document.activeElement.isContentEditable) {
-                document.activeElement.blur();
-            }
+            // See blurActiveEditable docstring: without this, preventDefault
+            // above would leave the caret parked in whichever overlay the
+            // user was previously editing, and Cmd+C would bail to native
+            // copy. This was the "works only sometimes" bug the user hit
+            // right after Session 7 first shipped.
+            blurActiveEditable();
 
             // Box-level selection: clicking the wrapper (the 4px padding
             // gutter around the contentEditable) selects the overlay so
@@ -501,6 +495,20 @@
     function clearTextSelection() {
         textLayer.querySelectorAll('.text-overlay.selected')
             .forEach((el) => el.classList.remove('selected'));
+    }
+
+    // Explicitly blur any actively-edited contentEditable. Every overlay
+    // mousedown that calls preventDefault must run this — without it, the
+    // caret stays parked inside a text overlay (because preventDefault
+    // suppresses the implicit blur a click would otherwise cause) and the
+    // next Cmd+C bails through the `editingText` carve-out to the browser's
+    // native copy on the stale Selection, instead of copying the overlay
+    // the user just selected. Diagnosed for text→text (Session 7); same
+    // pattern applies to mark and rect mousedowns which also preventDefault.
+    function blurActiveEditable() {
+        if (document.activeElement && document.activeElement.isContentEditable) {
+            document.activeElement.blur();
+        }
     }
 
     // Sync the mark toolbar (color, stroke width) to the given overlay when
@@ -582,6 +590,10 @@
             clearRectSelection();
             clearMarkSelection();
             clearTextSelection();
+            // Caret may still be parked in a text overlay the user was
+            // editing before switching to Mark tool. Drop it so the new
+            // mark is the unambiguous focus of attention.
+            blurActiveEditable();
             const rect = textLayer.getBoundingClientRect();
             const cx = e.clientX - rect.left;
             const cy = e.clientY - rect.top;
@@ -661,6 +673,9 @@
         clearRectSelection();
         clearMarkSelection();
         clearTextSelection();
+        // And drop any stale text caret so Cmd+C right after drawing hits
+        // the new rect/selection state, not a leftover editing context.
+        blurActiveEditable();
 
         const rect = textLayer.getBoundingClientRect();
         state.drawing = true;
@@ -837,6 +852,10 @@
             e.stopPropagation();
             e.preventDefault();
 
+            // See blurActiveEditable docstring — same pattern as text and
+            // mark mousedowns.
+            blurActiveEditable();
+
             const layerRect = textLayer.getBoundingClientRect();
             state.draggingRect = {
                 el: div,
@@ -939,6 +958,13 @@
             if (e.target === handle || e.target === resizeHandle) return;
             e.stopPropagation();
             e.preventDefault();
+
+            // preventDefault above suppresses the implicit blur of a
+            // contentEditable that had the caret. See blurActiveEditable
+            // docstring — without this, Cmd+C after "text caret → click
+            // mark" would bail to native copy on the stale text Selection
+            // instead of copying the just-selected mark.
+            blurActiveEditable();
 
             // Select this mark before any move-drag. Selection drives (1) the
             // orange outline the user requested, (2) toolbar color/width sync,

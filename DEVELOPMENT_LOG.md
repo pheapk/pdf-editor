@@ -362,6 +362,35 @@ Once blurred, `activeElement` is `<body>`, `editingText` is `false`, and the nex
 
 **Verified.** Created text A ("alpha"), text B ("beta"), left caret parked in B, clicked A's border, pressed Cmd+C then Cmd+V: `editingText: false`, `activeTag: BODY`, `aSelected: true`, paste produced a third overlay with text "alpha". No more "works only sometimes."
 
+### Follow-up-to-the-follow-up: same bug across Mark and Rect
+
+User tested again:
+
+> "Ok the cursor fix but only for textbox to textbox. There is another issue, when the cursor is inside the textbox, selecting Mark doesn't remove the cursor from the inside the textbox, even though the Mark is selected."
+
+Same root cause, wider scope. The Mark mousedown, Rect mousedown, and Rect drawing mousedown all call `preventDefault` — same implicit-blur suppression, same "caret parked in a text overlay stays put" outcome. Even the empty-canvas click-to-place mark path was a latent trap: if the user switched from Text to Mark tool via the toolbar, the contentEditable caret survived the tool switch, and clicking empty canvas to drop a new mark didn't always blur it (browser-dependent).
+
+**Fix.** Extracted the blur pattern into a small helper and called it from every mousedown that preventDefaults + the click-to-place mark path:
+
+```js
+function blurActiveEditable() {
+    if (document.activeElement && document.activeElement.isContentEditable) {
+        document.activeElement.blur();
+    }
+}
+```
+
+Call sites: text wrapper mousedown (replaces the inline blur from the earlier follow-up), mark overlay mousedown, rect overlay mousedown, rect drawing mousedown, mark click-to-place. Five sites, one-line each.
+
+**Verified.** Four Playwright cases, all green:
+
+- **Text → existing mark.** Caret in a text, click a mark on-canvas → body active, mark selected. Then Cmd+C / Cmd+V → mark count +1, text count unchanged. The exact case the user reported.
+- **Text → existing rect.** Caret in a text, click a rect → body active, rect selected, `editingText === false`.
+- **Text → mark click-to-place.** Caret in a text, toolbar switch to Mark, click empty canvas → body active, new mark auto-selected.
+- **Regression text → text.** Still works — Session-7 behavior unchanged, now via the shared helper.
+
+One loose end: the text creation path (click empty canvas in Text tool) doesn't need the helper because it calls `focusTextContent()` on the new overlay, which moves focus explicitly and naturally blurs the previous caret. That's the one "click empty canvas" path that doesn't need defensive blur.
+
 ---
 
 *This log is updated as work progresses. Each commit referenced above corresponds to a concrete slice of the story; `git log --oneline` is the authoritative timeline.*
