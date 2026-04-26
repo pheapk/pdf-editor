@@ -393,4 +393,53 @@ One loose end: the text creation path (click empty canvas in Text tool) doesn't 
 
 ---
 
+## Session 8 — 2026-04-25 Sat: Make dev-log workflow tool-agnostic
+
+Two days after Session 7 wrapped, the user opened a fresh conversation worried about persistence:
+
+> "If I close this session and return back to a new session, will claude code continue adding to development_log.md session 7… I want to make sure that new session will continue adding to the developmenet_log.md"
+
+Then a follow-up that broadened the scope:
+
+> "I want to add instructions in claude.md that reference development_log.md and development_log_instructions.md so that new session coding agent knows what to do without needed to rely on memory because other coding agent like Codex or Gemini will not have memory like you do."
+
+Up to this point, the dev-log practice was kept alive by Claude Code's memory system — a feedback file at `~/.claude/projects/.../memory/feedback_dev_log.md` that auto-loads into each Claude conversation. That works for Claude. It does nothing for Codex (`AGENTS.md`), Cursor (`.cursor/rules/`), Gemini CLI (`GEMINI.md`), or anyone reading a different convention. The workflow needed to live in the repo, not in a tool-specific store.
+
+### Decisions
+
+Three small choices, each with a real fork:
+
+- **`AGENTS.md` strategy: symlink vs duplicate vs one-line pointer.** Symlink is cleanest (single source of truth) but flaky on Windows, where it can serialize as a plain text path. Duplicate keeps two files in sync (manual chore). One-line pointer is portable but relies on agents *following* the pointer rather than reading inline. User picked the one-line pointer — minimal, no Windows edge case, and tools that respect `AGENTS.md` will read its single sentence and open `CLAUDE.md` for the rest.
+- **Where to surface "the plan."** The instructions doc already covered request → diagnosis → decision → execution → verification. User asked: should plans go in too? Considered making plan a subsection of "decision process" (they overlap) vs a separate numbered item (they're different artifacts — one is dialogue, the other is the agent's pre-coding proposal). Picked the latter, with a no-plan caveat for trivial / auto-edit changes so the section doesn't become a forced ritual.
+- **Memory: keep or remove?** The feedback memory at `feedback_dev_log.md` is now redundant with the in-repo `CLAUDE.md` pointer. User said "rely on the files," not "delete the memory." Left the memory in place as harmless redundancy; if it ever drifts from the docs, the docs win.
+
+### Plan
+
+Plan mode produced two passes. The first re-entry was inherited from the prior session's plan file (the Mark/Rect blur fix, already implemented before context compaction); verified it was already in `app.js` and exited cleanly. The second pass — after the user clarified scope — wrote the actual plan: rewrite `DEVELOPMENT_LOG_INSTRUCTIONS.md` for an agent audience (drop the user-facing "copy this into your project" bootstrap, add §4 "The plan"), insert a new "Development log" section into `CLAUDE.md` between Ground rules and Running locally, and create `AGENTS.md` as a one-line pointer. Out of scope: removing the memory entry, committing the unrelated `.gitignore` / `.playwright-mcp/` leftovers.
+
+One in-flight reversal worth recording: the first version of CLAUDE.md's opening line called `AGENTS.md` "a symlink to this file." That was true under the symlink approach the user later rejected. After they picked the text-pointer instead, the line was updated to "points here" so it stays accurate.
+
+### Implementation
+
+Commit `81342ae` — three files, +178/−1.
+
+- `DEVELOPMENT_LOG_INSTRUCTIONS.md` rewritten end-to-end. Audience swapped from user-as-bootstrapper to coding-agent-as-maintainer. New §4 "The plan" lives between decision process and implementation summary, with the no-plan caveat as prose. The worked-example excerpt was extended to include a "Plan" subsection so the format is anchored, not just described.
+- `CLAUDE.md` first line widened from "Claude Code (claude.ai/code)" to enumerate Claude Code, Codex, Cursor, Gemini CLI, Aider — plus a sentence pointing at `AGENTS.md`. New "## Development log" section sits directly after "Ground rules," ahead of "Running locally," because it's process content, not architecture.
+- `AGENTS.md` is a single sentence pointing at `CLAUDE.md`. Tools that respect the `AGENTS.md` convention read it and chase the pointer.
+
+### Verification
+
+No runtime to test. Confirmed by reading `CLAUDE.md` after the edits to check that the first line, the new section, and the section ordering all landed. Confirmed `AGENTS.md` is a regular file, not a symlink, per the user's preference.
+
+This entry itself was written in a follow-up commit after `81342ae`, not alongside it — a minor departure from the "commit the log alongside the feature commit" rule. The cause was ordering: the user wanted to commit the workflow change first, then decide whether the meta-work warranted a session entry. Worth noting precisely because the rules now in force say not to do that.
+
+### Files touched
+
+- `CLAUDE.md`
+- `DEVELOPMENT_LOG_INSTRUCTIONS.md`
+- `AGENTS.md`
+- `DEVELOPMENT_LOG.md` (this entry)
+
+---
+
 *This log is updated as work progresses. Each commit referenced above corresponds to a concrete slice of the story; `git log --oneline` is the authoritative timeline.*
