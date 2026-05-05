@@ -1,7 +1,7 @@
 # PDF Editor
 
 A simple browser-based PDF editor. 
-- Upload a PDF, add text and rectangular shape anywhere on the page, delete pages, and download the modified version. 
+- Upload a PDF, add text rectangular shape, or cross/check mark anywhere on the page, delete pages, and download the modified version. 
 - Original PDF stays unchanged.
 - PDF is processed locally in the browser memory. 
 
