@@ -14,11 +14,11 @@ This file provides guidance to any coding agent (Claude Code, OpenAI Codex, Curs
 
 ## Development log
 
-This project maintains a running `DEVELOPMENT_LOG.md` at the repo root as a portfolio case study of how it was built with AI-assisted development. Any coding agent working on this codebase MUST update the log as work progresses.
+This project maintains a running `DEVELOPMENT_LOG.md` at the repo root as a portfolio case study of how it was built with AI-assisted development. Any coding agent working on this codebase MUST keep the log current for the work it performs.
 
 - **Read the rules first.** Format, tone, what to include, and a worked example are in `DEVELOPMENT_LOG_INSTRUCTIONS.md`. Read it once at the start of each conversation if unfamiliar.
 - **Each new conversation = a new section.** Open a fresh `## Session N — YYYY-MM-DD Day: <title>` subsection. The session counter is monotonic; read the existing log to find the next `N`.
-- **Update as work progresses**, not just at the end. Capture the user's quoted phrasing, diagnosis (for bugs), decisions and tradeoffs, the agent's plan when one was made, implementation summary with `file:line` references, and verification outcomes.
+- **Open the log early, complete it near the end, and update mid-work only for material decisions or surprises.** Do not wait until the end to create the session, but avoid noisy incremental log churn for routine steps. Capture the user's quoted phrasing, diagnosis (for bugs), decisions and tradeoffs, the agent's plan when one was made, implementation summary with `file:line` references, and verification outcomes.
 - **Commit the log alongside the feature commits it describes.** The log is part of the deliverable.
 
 ## Running locally

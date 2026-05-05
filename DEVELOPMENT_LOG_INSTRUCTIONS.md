@@ -8,10 +8,10 @@ The log is a portfolio case study. A reader (future-you, a hiring manager, a cur
 
 ## When to write
 
-- **At the start of a conversation / batch of related work**, open a new dated subsection. Do not wait until the end.
+- **At the start of a conversation / batch of related work**, open a new dated subsection with the user's request and the initial plan. Do not wait until the end to create the session.
 - **Each new conversation = a new section.** Do not append to the previous session's section just because the work happens to be related — start a fresh `## Session N` subsection. The session counter (`N`) is monotonic across the whole file; read the existing log to find the next number.
-- **As decisions are made**, append to the active section. The log should reflect the real arc — including reversals, abandoned approaches, and bugs caught mid-implementation. A polished post-hoc summary loses the most interesting parts.
-- **After verification**, record what was tested and the outcome.
+- **During implementation**, update the active section only when something material changes: a user decision, design reversal, bug diagnosis, abandoned approach, or verification finding. The log should reflect the real arc without noisy incremental churn for routine steps.
+- **Near the end**, complete the section with implementation summary, verification, and files touched.
 - **Commit the log alongside the feature commits it describes.** The log is part of the deliverable.
 
 ---

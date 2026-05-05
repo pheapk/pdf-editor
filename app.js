@@ -59,9 +59,9 @@
         // n/s on the vertical axis).
         resizingRect: null,
         // Unified clipboard for Cmd/Ctrl+C → Cmd/Ctrl+V. Shape:
-        //   { type: 'mark' | 'text', data: {...snapshot of overlay fields} }
+        //   { type: 'mark' | 'rect' | 'text', data: {...snapshot of overlay fields} }
         // Single slot (like the OS clipboard) — copying a text replaces any
-        // copied mark and vice versa. `data` omits `z` and page: the pasted
+        // copied mark/rect and vice versa. `data` omits `z` and page: the pasted
         // copy lands on whichever page is visible with a fresh z so it draws
         // on top. Cleared on new-file load; persists across page navigation.
         clipboard: null,
@@ -1573,9 +1573,9 @@
             e.preventDefault();
             if (state.pdfDoc) saveBtn.click();
         }
-        // Cmd/Ctrl+C to copy the currently selected mark OR the last-focused
-        // text. Uses metaKey too so Mac users get Cmd-based shortcuts
-        // (Ctrl+Z above predates this and is left alone).
+        // Cmd/Ctrl+C to copy the currently selected mark/rect/text OR the
+        // last-focused text. Uses metaKey too so Mac users get Cmd-based
+        // shortcuts (Ctrl+Z above predates this and is left alone).
         //
         // The `editingText` guard yields to native copy while the user is
         // actively inside a contentEditable (per-character text copy is the
@@ -1590,15 +1590,17 @@
         // the mark toolbar, `document.activeElement` stays on that <input>
         // even after the mark is visibly selected, and the old
         // `!isEditingField` guard silently ate Cmd+C / Cmd+V. Fix: only bail
-        // on contentEditable. Form inputs yield to the mark/text — they have
-        // nothing useful to copy when an overlay is the user's subject.
+        // on contentEditable. Form inputs yield to the selected overlay —
+        // they have nothing useful to copy when an overlay is the user's subject.
         //
-        // Copy priority: a selected MARK beats the last-focused TEXT. A user
-        // who just clicked a mark's selection outline has moved focus away
-        // from any prior text; honoring the mark matches what they see.
+        // Copy priority: explicit overlay selection beats the last-focused
+        // TEXT. A user who clicked an overlay's selection outline has moved
+        // focus away from any prior text; honoring the visible selection
+        // matches what they see.
         const editingText = document.activeElement && document.activeElement.isContentEditable;
         if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !editingText) {
             const selMark = textLayer.querySelector('.mark-overlay.selected');
+            const selRect = textLayer.querySelector('.rect-overlay.selected');
             const selText = textLayer.querySelector('.text-overlay.selected');
             if (selMark) {
                 const idx = parseInt(selMark.dataset.markIndex, 10);
@@ -1609,6 +1611,23 @@
                         data: {
                             x: ov.x, y: ov.y, w: ov.w, h: ov.h,
                             kind: ov.kind, color: ov.color, strokeWidth: ov.strokeWidth,
+                        },
+                    };
+                    e.preventDefault();
+                }
+            } else if (selRect) {
+                const idx = parseInt(selRect.dataset.rectIndex, 10);
+                const ov = getRectOverlays(state.currentPage)[idx];
+                if (ov) {
+                    state.clipboard = {
+                        type: 'rect',
+                        data: {
+                            x: ov.x, y: ov.y, w: ov.w, h: ov.h,
+                            fillColor: ov.fillColor,
+                            fillOpacity: ov.fillOpacity,
+                            borderColor: ov.borderColor,
+                            borderOpacity: ov.borderOpacity,
+                            borderWidth: ov.borderWidth,
                         },
                     };
                     e.preventDefault();
@@ -1674,6 +1693,40 @@
                     newEl.classList.add('selected');
                     syncToolbarToMark(overlay);
                 }
+                cb.x = newX;
+                cb.y = newY;
+                e.preventDefault();
+            } else if (state.clipboard && state.clipboard.type === 'rect') {
+                const cb = state.clipboard.data;
+                const layerRect = textLayer.getBoundingClientRect();
+                const maxX = Math.max(0, layerRect.width - cb.w);
+                const maxY = Math.max(0, layerRect.height - cb.h);
+                const newX = Math.max(0, Math.min(maxX, cb.x + 20));
+                const newY = Math.max(0, Math.min(maxY, cb.y + 20));
+                const overlay = {
+                    x: newX, y: newY, w: cb.w, h: cb.h,
+                    fillColor: cb.fillColor,
+                    fillOpacity: cb.fillOpacity,
+                    borderColor: cb.borderColor,
+                    borderOpacity: cb.borderOpacity,
+                    borderWidth: cb.borderWidth,
+                    z: state.nextZ++,
+                };
+                getRectOverlays(state.currentPage).push(overlay);
+                const newIdx = getRectOverlays(state.currentPage).length - 1;
+                clearRectSelection();
+                clearMarkSelection();
+                clearTextSelection();
+                setTool('rect');
+                renderAllOverlays();
+                const newEl = textLayer.querySelector('.rect-overlay[data-rect-index="' + newIdx + '"]');
+                if (newEl) newEl.classList.add('selected');
+                rectFillIn.value = overlay.fillColor;
+                rectFillOpacIn.value = overlay.fillOpacity;
+                rectBorderIn.value = overlay.borderColor;
+                rectBorderOpacIn.value = overlay.borderOpacity;
+                rectBorderWidthIn.value = overlay.borderWidth;
+                updateOpacityLabels();
                 cb.x = newX;
                 cb.y = newY;
                 e.preventDefault();

@@ -442,4 +442,59 @@ This entry itself was written in a follow-up commit after `81342ae`, not alongsi
 
 ---
 
+## Session 9 — 2026-05-05 Tue: Rect copy / paste
+
+User asked:
+
+> "read instructions in claude.md and the code esp on copying text and mark, we want to add copy/past feature to Rect also."
+
+The existing clipboard work from Sessions 5-7 already left the right shape: a single `state.clipboard` slot with a `type` discriminator, paste onto the visible page, +20/+20 staircase offset, and selection of the pasted overlay. Rects were the missing third branch.
+
+### Plan
+
+Extend the existing Cmd/Ctrl+C and Cmd/Ctrl+V keydown handler in `app.js`. Copy should read the currently `.selected` Rect, snapshot its geometry and style fields without `z` or page number, and let later copies replace the single clipboard slot. Paste should create a fresh Rect on the current page with a new `z`, clamp the +20/+20 offset to the canvas bounds, select the pasted Rect, and sync the Rect toolbar to its copied values. Out of scope: new UI, OS clipboard integration, or changing text/mark behavior.
+
+### Implementation
+
+`app.js:61` now documents `rect` as the third discriminant in the unified clipboard. The copy handler at `app.js:1601` keeps the existing priority model — explicit selected overlay first, implicit last-focused text only as a fallback — and adds a selected-Rect branch that snapshots `x/y/w/h`, fill color/opacity, border color/opacity, and border width.
+
+The paste handler at `app.js:1699` creates a fresh Rect with a new `z`, clamps the +20/+20 offset to the current canvas bounds, pushes it onto the current page, rebuilds the DOM, selects the pasted Rect, and syncs the Rect toolbar values plus opacity labels. The clipboard's `x/y` are updated to the just-pasted position, so repeated Cmd/Ctrl+V staircases Rects the same way Text and Mark already do.
+
+### Verification
+
+`node --check app.js` passes. Started the local static server with `python3 -m http.server 8000`; sandboxed `curl` could not connect to localhost, but the same request with the approved escalation returned `HTTP/1.0 200 OK` from `SimpleHTTP/0.6 Python/3.9.6`.
+
+Interactive browser automation was not run: this workspace has the sample PDF fixture, but no local `playwright`, `chromium`, or `google-chrome` command is available. The remaining manual check is: draw/select a Rect, press Cmd/Ctrl+C, press Cmd/Ctrl+V twice, and confirm two copied Rects appear at +20/+20 steps with the same style and the last pasted Rect selected.
+
+### Files touched
+
+- `app.js`
+- `DEVELOPMENT_LOG.md`
+
+---
+
+## Session 10 — 2026-05-05 Tue: Dev-log cadence
+
+User asked how to tune the development-log workflow after comparing two approaches:
+
+> "for the development log, does updating as you work, and updating at the end is better for copture work, and which one consume less token?"
+
+The decision was a compromise: open the session early so the request and initial plan are not lost, update mid-work only when a real decision or surprise happens, and complete the section near the end with implementation and verification. That preserves the case-study value without spending tokens on routine log edits.
+
+### Implementation
+
+`CLAUDE.md` now says agents must keep the log current, but clarifies the cadence: open early, complete near the end, and update mid-work only for material decisions or surprises. `DEVELOPMENT_LOG_INSTRUCTIONS.md` mirrors the same rule in its "When to write" section, replacing the stricter "as decisions are made" wording with the new low-churn workflow.
+
+### Verification
+
+Docs-only change. Verified by reading the edited sections and running `git diff --check`.
+
+### Files touched
+
+- `CLAUDE.md`
+- `DEVELOPMENT_LOG_INSTRUCTIONS.md`
+- `DEVELOPMENT_LOG.md`
+
+---
+
 *This log is updated as work progresses. Each commit referenced above corresponds to a concrete slice of the story; `git log --oneline` is the authoritative timeline.*
