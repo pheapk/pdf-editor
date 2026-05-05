@@ -497,4 +497,27 @@ Docs-only change. Verified by reading the edited sections and running `git diff 
 
 ---
 
+## Session 11 — 2026-05-05 Tue: Ignore Playwright MCP cache
+
+User asked:
+
+> "add .playwright-mcp to .gitignore"
+
+Small housekeeping change: `.playwright-mcp/` is local browser automation state and should not be committed with the app source.
+
+### Implementation
+
+Added `.playwright-mcp/` under a new "Tool-local state" section in `.gitignore`.
+
+### Verification
+
+`git status --short` no longer lists `.playwright-mcp/`; only the `.gitignore` file itself remains untracked because it has not been committed in this repo yet. `git diff --check` passes.
+
+### Files touched
+
+- `.gitignore`
+- `DEVELOPMENT_LOG.md`
+
+---
+
 *This log is updated as work progresses. Each commit referenced above corresponds to a concrete slice of the story; `git log --oneline` is the authoritative timeline.*

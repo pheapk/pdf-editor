@@ -1,0 +1,31 @@
+# ============================================================
+# .gitignore — Files that should NEVER be committed to git
+# ============================================================
+
+# Secrets — the most important exclusion
+.env
+*.pem
+*.key
+
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# uv lockfile (optional — some teams commit this)
+# uv.lock
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Tool-local state
+.playwright-mcp/
+
+# OS junk
+.DS_Store
+Thumbs.db
