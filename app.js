@@ -480,7 +480,7 @@
     // Default square side (canvas pixels) for click-to-place marks. Chosen
     // to roughly match the size of a typical PDF checkbox; the user can
     // resize after placement via the corner handle.
-    const MARK_DEFAULT_SIZE = 40;
+    const MARK_DEFAULT_SIZE = 20;
 
     function clearMarkSelection() {
         textLayer.querySelectorAll('.mark-overlay.selected')
@@ -532,8 +532,8 @@
         const idx = parseInt(sel.dataset.markIndex, 10);
         const ov = getMarkOverlays(state.currentPage)[idx];
         if (!ov) return;
-        ov.color = normalizeHexColor(markColorIn.value, '#16a34a');
-        ov.strokeWidth = normalizeBorderWidth(markStrokeWidthIn.value, 3);
+        ov.color = normalizeHexColor(markColorIn.value, '#000000');
+        ov.strokeWidth = normalizeBorderWidth(markStrokeWidthIn.value, 2);
         const path = sel.querySelector('svg path');
         if (path) {
             path.setAttribute('stroke', ov.color);
@@ -606,8 +606,8 @@
                 w: SIZE,
                 h: SIZE,
                 kind: getCurrentMarkKind(),
-                color: normalizeHexColor(markColorIn.value, '#16a34a'),
-                strokeWidth: normalizeBorderWidth(markStrokeWidthIn.value, 3),
+                color: normalizeHexColor(markColorIn.value, '#000000'),
+                strokeWidth: normalizeBorderWidth(markStrokeWidthIn.value, 2),
                 z: state.nextZ++,
             };
             getMarkOverlays(state.currentPage).push(overlay);
@@ -754,10 +754,10 @@
         const overlay = {
             x, y, w, h,
             fillColor: normalizeHexColor(rectFillIn.value),
-            fillOpacity: clampPercent(rectFillOpacIn.value, 20),
+            fillOpacity: clampPercent(rectFillOpacIn.value, 100),
             borderColor: normalizeHexColor(rectBorderIn.value),
             borderOpacity: clampPercent(rectBorderOpacIn.value, 100),
-            borderWidth: normalizeBorderWidth(rectBorderWidthIn.value),
+            borderWidth: normalizeBorderWidth(rectBorderWidthIn.value, 0),
             z: state.nextZ++,
         };
 
@@ -1001,10 +1001,10 @@
         const ov = getRectOverlays(state.currentPage)[idx];
         if (!ov) return;
         ov.fillColor = normalizeHexColor(rectFillIn.value);
-        ov.fillOpacity = clampPercent(rectFillOpacIn.value, 20);
+        ov.fillOpacity = clampPercent(rectFillOpacIn.value, 100);
         ov.borderColor = normalizeHexColor(rectBorderIn.value);
         ov.borderOpacity = clampPercent(rectBorderOpacIn.value, 100);
-        ov.borderWidth = normalizeBorderWidth(rectBorderWidthIn.value);
+        ov.borderWidth = normalizeBorderWidth(rectBorderWidthIn.value, 0);
         applyRectStyles(sel, ov);
     }
 
@@ -1275,11 +1275,11 @@
                         const rectOpts = { x: pdfX, y: pdfY, width: pdfW, height: pdfH };
 
                         // BUGFIX: fallbacks were both `0` here, but at creation
-                        // time (mouseup handler) the defaults are 20 for fill
+                        // time (mouseup handler) the defaults are 100 for fill
                         // and 100 for border. Keep save-time fallbacks
                         // aligned with creation-time defaults so an overlay
                         // missing these fields still renders at the UI default.
-                        const fillOpacity = clampPercent(ov.fillOpacity, 20);
+                        const fillOpacity = clampPercent(ov.fillOpacity, 100);
                         const borderOpacity = clampPercent(ov.borderOpacity, 100);
                         const borderWidth = normalizeBorderWidth(ov.borderWidth, 0);
                         const hasFill = fillOpacity > 0;
@@ -1322,7 +1322,7 @@
                         });
 
                         const c = parsePdfColor(ov.color);
-                        const thickness = normalizeBorderWidth(ov.strokeWidth, 3) / state.scale;
+                        const thickness = normalizeBorderWidth(ov.strokeWidth, 2) / state.scale;
                         const path = MARK_SAVE_PATHS[ov.kind] || MARK_SAVE_PATHS.check;
 
                         let prev = null;

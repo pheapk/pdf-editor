@@ -520,4 +520,35 @@ Added `.playwright-mcp/` under a new "Tool-local state" section in `.gitignore`.
 
 ---
 
+## Session 12 — 2026-05-05 Tue: Rect and Mark defaults
+
+User asked to change startup defaults:
+
+> "Let's change default Rect fill color to Black when program starts, and opacity to 100% by default on start."
+
+and:
+
+> "Change default color of Mark to black also, and reduce width from 3 to 2, and also reduce the default size on creation 50% smaller that what it is now."
+
+Then clarified:
+
+> "add this for Rect, change the default border width to zero."
+
+### Implementation
+
+Changed the startup toolbar values in `index.html`: Rect fill now starts at black with 100% fill opacity and zero border width; Mark color now starts black with stroke width 2. Matched those defaults in `app.js` so creation, toolbar edits, and save-time fallbacks remain aligned. `MARK_DEFAULT_SIZE` changed from 40 to 20 canvas pixels. Updated `CLAUDE.md`'s code-conventions example so it no longer documents the old Rect fill-opacity default.
+
+### Verification
+
+`node --check app.js` passes. `git diff --check` passes. A targeted `rg` scan confirmed the old startup defaults (`#16a34a`, `#2563eb`, `value="20"` for Rect fill opacity, `value="3"` for Mark width, and fallback `clampPercent(..., 20)`) are gone from `app.js` / `index.html` except unrelated text color defaults. User manually tested locally and reported: "tests worked."
+
+### Files touched
+
+- `index.html`
+- `app.js`
+- `CLAUDE.md`
+- `DEVELOPMENT_LOG.md`
+
+---
+
 *This log is updated as work progresses. Each commit referenced above corresponds to a concrete slice of the story; `git log --oneline` is the authoritative timeline.*

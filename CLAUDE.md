@@ -76,5 +76,5 @@ Both text and rect overlays are draggable using one document-level `mousemove` /
 
 - Plain ES2017+, no modules, no transpile. Everything runs directly in the browser.
 - DOM refs are cached once at the top of `app.js` via the `$()` helper. Reuse them rather than re-querying.
-- Colors flow through `normalizeHexColor()` / `parseHexColor()` / `hexToRgba()`; opacity/width through `clampPercent()` / `percentToUnit()` / `normalizeBorderWidth()`. Use these at both creation and save sites so preview and saved PDF match — defaults must stay aligned between the two call sites (e.g. fill opacity defaults to 20, border opacity to 100 in both places).
+- Colors flow through `normalizeHexColor()` / `parseHexColor()` / `hexToRgba()`; opacity/width through `clampPercent()` / `percentToUnit()` / `normalizeBorderWidth()`. Use these at both creation and save sites so preview and saved PDF match — defaults must stay aligned between the two call sites (e.g. fill opacity defaults to 100, border opacity to 100 in both places).
 - Existing inline bugfix comments document non-obvious invariants (text drag hit area, rect cross-contamination, border-only opacity, Ctrl+Z guard). Preserve them when refactoring nearby code.
