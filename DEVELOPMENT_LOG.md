@@ -442,7 +442,7 @@ This entry itself was written in a follow-up commit after `81342ae`, not alongsi
 
 ---
 
-## Session 9 — 2026-05-05 Tue: Rect copy / paste
+## Session 9 — 2026-05-04 Mon: Rect copy / paste
 
 User asked:
 
@@ -473,7 +473,7 @@ Interactive browser automation was not run: this workspace has the sample PDF fi
 
 ---
 
-## Session 10 — 2026-05-05 Tue: Dev-log cadence
+## Session 10 — 2026-05-04 Mon: Dev-log cadence
 
 User asked how to tune the development-log workflow after comparing two approaches:
 
@@ -497,7 +497,7 @@ Docs-only change. Verified by reading the edited sections and running `git diff 
 
 ---
 
-## Session 11 — 2026-05-05 Tue: Ignore Playwright MCP cache
+## Session 11 — 2026-05-04 Mon: Ignore Playwright MCP cache
 
 User asked:
 
@@ -520,7 +520,7 @@ Added `.playwright-mcp/` under a new "Tool-local state" section in `.gitignore`.
 
 ---
 
-## Session 12 — 2026-05-05 Tue: Rect and Mark defaults
+## Session 12 — 2026-05-04 Mon: Rect and Mark defaults
 
 User asked to change startup defaults:
 
