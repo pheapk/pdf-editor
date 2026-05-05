@@ -10,12 +10,13 @@ https://pheapk.github.io/pdf-editor/
 ## Features
 
 - Drag & drop or file picker PDF upload
-- Click anywhere on a page to add text
-- Font size, color, and family controls
+- Click anywhere on a page to add text. Copy, move, delete. Adjust font size, color, and family controls
+- Add, copy, move, delete rectangle. Adjust fill color, opacity, border color, opacity and border width
+- Add, copy, move, delete cross or check mark. Adjust color and width. 
 - Multi-page navigation
 - Undo and clear page actions
 - Save & download with edits baked into the PDF
-- Keyboard shortcuts: Ctrl+S (save), Ctrl+Z (undo)
+- Keyboard shortcuts: Ctrl+S (save), Ctrl+Z (undo), Ctrl + C (copy), Ctrl + v (paste)
 
 ## Run Locally
 
